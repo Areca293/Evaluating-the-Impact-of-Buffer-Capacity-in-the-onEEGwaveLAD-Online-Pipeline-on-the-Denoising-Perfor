@@ -15,7 +15,7 @@
 \title{Evaluating the Impact of Buffer Capacity in the onEEGwaveLAD Online Pipeline on the Denoising Performance of Electroencephalographic Data}
 \author{Yingjun Sun}
 \supervisor{Dr. Luca Longo}
-\secondreader{Dr who}
+\secondreader{Dr. Andrea Visentin}
 \date{\today} 
 
 \abstract{%
@@ -564,72 +564,24 @@ Figure~\ref{fig:oneegwavelad_pipeline_focus} illustrates the seven-phase archite
 \subsection{Parameterisation of DWT and Scaleogram Construction}
 \label{subsec:param_dwt_scaleogram}
  
-Each streamed block is decomposed with a multi-level Discrete Wavelet Transform implemented
-through the PyWavelets library~\parencite{lee2019pywavelets}. The Symlets-4 (\texttt{sym4}) wavelet was
-selected as the analysing filter, a near-symmetric member of the Daubechies family~\parencite{daubechies1992ten} whose reduced
-phase distortion is well suited to preserving the temporal position of transient events in the
-reconstructed signal. Boundary handling uses the \texttt{periodization} mode, which keeps the
-number of coefficients strictly consistent with the dyadic block length established in
-Section~\ref{sec:data_prep_streaming} and so avoids the coefficient growth introduced by
-zero-padded extensions. The number of decomposition levels is not fixed manually but obtained from 
-\texttt{pywt.dwt\_max\_level} for the given block length, so the decomposition 
-proceeds to the deepest level the signal supports without the analyst imposing 
-an arbitrary depth.
+Each streamed block is decomposed with a multi-level Discrete Wavelet Transform implemented through the PyWavelets library~\parencite{lee2019pywavelets}. The Symlets-4 (\texttt{sym4}) wavelet was selected as the analysing filter, a near-symmetric member of the Daubechies family~\parencite{daubechies1992ten} whose reduced phase distortion is well suited to preserving the temporal position of transient events in the reconstructed signal. Boundary handling uses the \texttt{periodization} mode, which keeps the number of coefficients strictly consistent with the dyadic block length established in Section~\ref{sec:data_prep_streaming} and so avoids the coefficient growth introduced by zero-padded extensions. The number of decomposition levels is not fixed manually but obtained from \texttt{pywt.dwt\_max\_level} for the given block length, so the decomposition proceeds to the deepest level the signal supports without the analyst imposing an arbitrary depth.
 
-The coefficients returned by the transform are then arranged into the normalised scaleogram that
-the anomaly detector consumes. Because coefficients at deeper levels carry systematically larger
-magnitudes than those at shallow levels, each coefficient is divided by $2^{m}$, with $m$ the
-decomposition level, to place the levels on a comparable scale before any distance is computed.
-To reconcile the differing number of coefficients across levels, the values at each level are
-up-sampled with \texttt{np.repeat} so that every level contributes the same number of columns,
-yielding a rectangular matrix whose vertical slices are the Instantaneous Spectral Profiles used
-throughout the remainder of the pipeline. The normalised scaleogram consumed by the anomaly
-detector is assembled exclusively from the detail coefficients of the decomposition. The
-approximation coefficients of the deepest level, which carry the slowest components of the signal,
-are held aside and passed through to reconstruction unchanged; they take no part in the anomaly
-scoring or in the subsequent attenuation. As with the normalisation, this separation ensures that
-the representation used for detection does not alter the coefficients later used to rebuild the
-denoised signal, and the consequence of leaving the approximation band unprocessed is examined
-among the limitations in Section~\ref{sec:assumptions_strengths_limitations}.
+The coefficients returned by the transform are then arranged into the normalised scaleogram that the anomaly detector consumes. Because coefficients at deeper levels carry systematically larger magnitudes than those at shallow levels, each coefficient is divided by $2^{m}$, with $m$ the decomposition level, to place the levels on a comparable scale before any distance is computed. To reconcile the differing number of coefficients across levels, the values at each level are up-sampled with \texttt{np.repeat} so that every level contributes the same number of columns, yielding a rectangular matrix whose vertical slices are the Instantaneous Spectral Profiles used throughout the remainder of the pipeline. The normalised scaleogram consumed by the anomaly detector is assembled exclusively from the detail coefficients of the decomposition. The approximation coefficients of the deepest level, which carry the slowest components of the signal, are held aside and passed through to reconstruction unchanged; they take no part in the anomaly scoring or in the subsequent attenuation. As with the normalisation, this separation ensures that the representation used for detection does not alter the coefficients later used to rebuild the denoised signal, and the consequence of leaving the approximation band unprocessed is examined among the limitations in Section~\ref{sec:assumptions_strengths_limitations}.
 
 \subsection{Engineering the Adaptive Sliding Buffer Mechanism}
 \label{subsec:eng_sliding_buffer}
  
-The temporal adaptivity of the framework is realised by a first-in, first-out buffer that stores
-the Instantaneous Spectral Profiles of the most recent windows, its depth fixed by the Adaptive
-Buffer Size ($B_s$)~\parencite{longo2025oneegwavelad}. As each new window arrives, its profiles are appended and the oldest are discarded, 
-so the isolation model is always trained on a sliding, contiguous stretch of recent 
-history rather than on the full recording. This design
-gives the detector a moving reference of nominal activity that tracks slow changes in the signal,
-while bounding the amount of data held in memory at any instant, a property required for
-continuous operation on modest hardware.
+The temporal adaptivity of the framework is realised by a first-in, first-out buffer that stores the Instantaneous Spectral Profiles of the most recent windows, its depth fixed by the Adaptive Buffer Size ($B_s$)~\parencite{longo2025oneegwavelad}. As each new window arrives, its profiles are appended and the oldest are discarded, so the isolation model is always trained on a sliding, contiguous stretch of recent history rather than on the full recording. This design gives the detector a moving reference of nominal activity that tracks slow changes in the signal, while bounding the amount of data held in memory at any instant, a property required for continuous operation on modest hardware.
 
-Retraining the isolation model on every single window would, however, dominate the per-window
-computation and place the per-window latency beyond the range acceptable for real-time use.
-To contain this cost, the model is refitted once every five windows rather than continuously,
-the buffer being updated at each step but the isolation trees rebuilt only when the window
-counter satisfies \texttt{window\_cnt \% 5 == 0}. This throttling trades a small amount of
-responsiveness to the most recent samples for a substantial reduction in processing time, and
-its consequences for the framework's sensitivity to abrupt changes are examined among the
-limitations in Section~\ref{sec:assumptions_strengths_limitations}.
+Retraining the isolation model on every single window would, however, dominate the per-window computation and place the per-window latency beyond the range acceptable for real-time use. To contain this cost, the model is refitted once every five windows rather than continuously, the buffer being updated at each step but the isolation trees rebuilt only when the window counter satisfies \texttt{window\_cnt \% 5 == 0}. This throttling trades a small amount of responsiveness to the most recent samples for a substantial reduction in processing time, and its consequences for the framework's sensitivity to abrupt changes are examined among the limitations in Section~\ref{sec:assumptions_strengths_limitations}.
 
 \subsection{Integration and Reconstruction with the eiFOREST}
 \label{subsec:integration_eiforest}
  
-Anomaly detection is delegated to the Extended Isolation Forest as implemented in the
-\texttt{isotree} library~\parencite{cortes2019distance}. The ensemble is fixed at $IF_t = 100$
-trees with a sub-sampling size of $IF_s = 512$ profiles, and the random seed is set to $42$ so
-that every run over the grid is reproducible. Each Instantaneous Spectral Profile of the current
-window is assigned an anomaly score, and profiles whose score exceeds the anomaly threshold
-$T_a = 0.55$ are recorded as anomalous time locations; the value $0.55$ is applied uniformly
-across all subjects and channels and is therefore treated as a fixed control rather than a tuned
+Anomaly detection is delegated to the Extended Isolation Forest as implemented in the \texttt{isotree} library~\parencite{cortes2019distance}. The ensemble is fixed at $IF_t = 100$ trees with a sub-sampling size of $IF_s = 512$ profiles, and the random seed is set to $42$ so that every run over the grid is reproducible. Each Instantaneous Spectral Profile of the current window is assigned an anomaly score, and profiles whose score exceeds the anomaly threshold $T_a = 0.55$ are recorded as anomalous time locations; the value $0.55$ is applied uniformly across all subjects and channels and is therefore treated as a fixed control rather than a tuned
 quantity.
 
-Mitigation operates on the original, unnormalised detail coefficients so the 
-reconstructed signal is not distorted by the normalisation used for detection. Let $\mu$ denote the centroid of
-the coefficient vectors held in the buffer, and let $c_i$ be the coefficient vector at an
-anomalous time location together with the neighbours added by the expansion step $E_s = 35$. An attenuation factor is formed from the distance of each vector to the centroid, normalised by the
-largest such distance~\parencite{longo2025oneegwavelad}:
+Mitigation operates on the original, unnormalised detail coefficients so the reconstructed signal is not distorted by the normalisation used for detection. Let $\mu$ denote the centroid of the coefficient vectors held in the buffer, and let $c_i$ be the coefficient vector at an anomalous time location together with the neighbours added by the expansion step $E_s = 35$. An attenuation factor is formed from the distance of each vector to the centroid, normalised by the largest such distance~\parencite{longo2025oneegwavelad}:
 \begin{equation}
     m_i = 1 - \frac{\lVert c_i - \mu \rVert}{\max_j \lVert c_j - \mu \rVert},
     \label{eq:mitigator}
@@ -639,43 +591,17 @@ and the mitigated coefficients are obtained by an element-wise (Hadamard) produc
     \tilde{c}_i = m_i \odot c_i, \qquad m_i \in [0,1],
     \label{eq:mitigation_apply}
 \end{equation}
-where the factors are clipped to the interval $[0,1]$ (\texttt{np.clip(mtga\_vec, 0.0, 1.0)}) so 
-mitigation can only reduce, never amplify, a coefficient.\footnote{The originating framework
-defines the central reference of the buffer as its medoid~\parencite{longo2025oneegwavelad}; the
-present implementation uses the centroid, a lower-complexity approximation that the framework's
-authors permit and that avoids the pairwise dissimilarity computation required by the medoid.}
-Coefficients closer to the centroid are attenuated less and those further away more, 
-so profiles judged anomalous are drawn toward the representative activity of the 
-recent buffer. The
-retained and attenuated detail coefficients, together with the unchanged approximation
-coefficients, are then returned to the time domain by the inverse Discrete Wavelet Transform,
-producing the denoised window that the streaming loop emits before the next block is drawn.
+where the factors are clipped to the interval $[0,1]$ (\texttt{np.clip(mtga\_vec, 0.0, 1.0)}) so mitigation can only reduce, never amplify, a coefficient.\footnote{The originating framework defines the central reference of the buffer as its medoid~\parencite{longo2025oneegwavelad}; the present implementation uses the centroid, a lower-complexity approximation that the framework's authors permit and that avoids the pairwise dissimilarity computation required by the medoid.} Coefficients closer to the centroid are attenuated less and those further away more, so profiles judged anomalous are drawn toward the representative activity of the recent buffer. The retained and attenuated detail coefficients, together with the unchanged approximation coefficients, are then returned to the time domain by the inverse Discrete Wavelet Transform, producing the denoised window that the streaming loop emits before the next block is drawn.
 
 
 \subsection{Design of the Adaptive Buffer Size Grid Search}
 \label{subsec:design_grid_search}
 
-With every other component held constant, the Adaptive Buffer Size is the single independent
-variable of the experiment and is varied over a two-stage grid search strategy designed 
-to balance computational efficiency with resolution in the region where the convergence lower 
-bound is expected to lie.
+With every other component held constant, the Adaptive Buffer Size is the single independent variable of the experiment and is varied over a two-stage grid search strategy designed to balance computational efficiency with resolution in the region where the convergence lower bound is expected to lie.
 
-\textbf{Coarse-grained exploration.} The initial search spans $B_s \in \{1, 2, 4, 8, 16, 32, 64\}$, 
-covering two orders of magnitude with exponential spacing on a logarithmic scale (base-2). This 
-geometric progression allocates dense sampling to the shallow buffers where performance is 
-anticipated to change rapidly, and progressively coarser steps across the deeper buffers where 
-performance is expected to converge. The coarse grid provides a preliminary view of the 
-convergence trajectory and locates the approximate region of diminishing returns without 
-evaluating every intermediate integer, which would be computationally prohibitive across thirty 
-subjects and thirty channels.
+\textbf{Coarse-grained exploration.} The initial search spans $B_s \in \{1, 2, 4, 8, 16, 32, 64\}$, covering two orders of magnitude with exponential spacing on a logarithmic scale (base-2). This geometric progression allocates dense sampling to the shallow buffers where performance is anticipated to change rapidly, and progressively coarser steps across the deeper buffers where performance is expected to converge. The coarse grid provides a preliminary view of the convergence trajectory and locates the approximate region of diminishing returns without evaluating every intermediate integer, which would be computationally prohibitive across thirty subjects and thirty channels.
 
-\textbf{Fine-grained refinement.} Following the identification of the coarse elbow region around $B_s \approx 4$ in the logarithmic Phase 1 search, a second linear grid was executed to provide higher resolution within the converging interval. This refined Phase 2 grid spans $B_s \in \{4, 6, 8, 10, 12, 14, 16, 18\}$, with uniform spacing of two units, and captures the transition from rapid improvement to plateau with sufficient granularity to support precise Kneedle detection and to confirm that the convergence lower bound lies at $B_s = 8$ rather than at the Phase 1 approximate elbow of $B_s = 4$. The shift from logarithmic to linear spacing in the refined grid acknowledges the sensitivity of 
-the Kneedle elbow detection to the axis scale~\parencite{satopaa2011finding}, a methodological 
-consideration addressed in the discussion of results. The two grids share three overlapping points ($B_s \in \{4,8,16\}$), which serve as consistency 
-checks: if the convergence lower bound is robust, it should be identifiable from both the coarse 
-and refined perspectives despite the difference in axis scale and sampling density. Both stages are executed on the full cohort 
-of thirty subjects, so that the reported convergence lower bound reflects the behaviour across 
-the entire dataset rather than a subset.
+\textbf{Fine-grained refinement.} Following the identification of the coarse elbow region around $B_s \approx 4$ in the logarithmic Phase 1 search, a second linear grid was executed to provide higher resolution within the converging interval. This refined Phase 2 grid spans $B_s \in \{4, 6, 8, 10, 12, 14, 16, 18\}$, with uniform spacing of two units, and captures the transition from rapid improvement to plateau with sufficient granularity to support precise Kneedle detection and to confirm that the convergence lower bound lies at $B_s = 8$ rather than at the Phase 1 approximate elbow of $B_s = 4$. The shift from logarithmic to linear spacing in the refined grid acknowledges the sensitivity of the Kneedle elbow detection to the axis scale~\parencite{satopaa2011finding}, a methodological consideration addressed in the discussion of results. The two grids share three overlapping points ($B_s \in \{4,8,16\}$), which serve as consistency checks: if the convergence lower bound is robust, it should be identifiable from both the coarse and refined perspectives despite the difference in axis scale and sampling density. Both stages are executed on the full cohort of thirty subjects, so that the reported convergence lower bound reflects the behaviour across the entire dataset rather than a subset.
 
 \begin{table}[!htb]
     \centering
@@ -695,60 +621,19 @@ coarse stage covers two orders of magnitude efficiently, while the refined stage
 higher resolution in the region identified by the coarse search ($B_s \approx 8$). The two stages share three overlapping points ($B_s \in \{4,8,16\}$), which serve as consistency checks: if the convergence lower bound is robust, it should be identifiable from both the coarse and refined perspectives despite the difference in axis scale and sampling density.}
     \label{tab:two_stage_grid}
 \end{table}
-Because the seven buffer sizes of the coarse grid, combined with the eight of the 
-refined grid (with overlap at 4, 8, 16), thirty channels and thirty subjects 
-define a large number of independent denoising runs, the search is executed in 
-parallel. Each 
-combination of subject, channel and buffer size is flattened into a self-contained task and 
-dispatched across all available cores with the \texttt{joblib} library, with the forest itself 
-also permitted to use all cores. Partial results are appended to disk as each task completes, so an interrupted run 
-can resume from the last checkpoint rather than restart, a practical safeguard 
-given the length of the full grid. The per-window execution time is recorded alongside 
-the denoising metrics for every task, providing the latency measurements later used to judge 
-real-time viability.
+Because the seven buffer sizes of the coarse grid, combined with the eight of the refined grid (with overlap at 4, 8, 16), thirty channels and thirty subjects define a large number of independent denoising runs, the search is executed in parallel. Each combination of subject, channel and buffer size is flattened into a self-contained task and dispatched across all available cores with the \texttt{joblib} library, with the forest itself also permitted to use all cores. Partial results are appended to disk as each task completes, so an interrupted run can resume from the last checkpoint rather than restart, a practical safeguard given the length of the full grid. The per-window execution time is recorded alongside the denoising metrics for every task, providing the latency measurements later used to judge real-time viability.
 
 \section{Deployment and Implementation Environment}
 \label{sec:deployment_environment}
  
-The experiments were executed on the Google Colaboratory platform, with the dataset and all
-intermediate artefacts stored on a mounted Google Drive volume under a fixed project directory.
-This arrangement was chosen for its reproducibility and for the persistent storage 
-it provides across sessions. Because the full sweep over seven buffer sizes, thirty 
-channels and thirty subjects spans a large number of independent runs, partial 
-results are appended to disk as each task completes, allowing an interrupted 
-execution to resume from the last written checkpoint rather than restart. The denoising metrics for every task, along
-with the per-window latency used later to judge real-time viability, are accumulated in
-comma-separated result files that are consolidated into the master table on which the statistical
-analysis operates.
+The experiments were executed on the Google Colaboratory platform, with the dataset and all intermediate artefacts stored on a mounted Google Drive volume under a fixed project directory. This arrangement was chosen for its reproducibility and for the persistent storage it provides across sessions. Because the full sweep over seven buffer sizes, thirty channels and thirty subjects spans a large number of independent runs, partial results are appended to disk as each task completes, allowing an interrupted execution to resume from the last written checkpoint rather than restart. The denoising metrics for every task, along with the per-window latency used later to judge real-time viability, are accumulated in comma-separated result files that are consolidated into the master table on which the statistical analysis operates.
 
-The processing pipeline is implemented in Python and rests on a small set of established
-scientific libraries, each confined to a well-defined role. Neurophysiological input and event
-extraction are handled by MNE-Python~\parencite{gramfort2013meg}; the multi-level wavelet
-decomposition and its inverse are computed with PyWavelets~\parencite{lee2019pywavelets}; the Extended
-Isolation Forest is provided by the \texttt{isotree} library~\parencite{cortes2019distance}; and
-the non-parametric statistical procedures draw on \texttt{scipy} and
-\texttt{scikit\_posthocs}~\parencite{virtanen2020scipy, terpilowski2019scikit}. The
-baseline methods draw on the \texttt{asrpy} implementation of Artefact Subspace Reconstruction and
-the FASTER-style routines supplied with the study
-material~\parencite{mullen2015real, nolan2010faster}. Channel-level parallelism is realised with
-\texttt{joblib}, which dispatches the flattened subject--channel--buffer tasks across all available
-cores, with the isolation forest itself also permitted to use every core during fitting. The
-complete software stack and the responsibility assigned to each component are listed in
-Table~\ref{tab:software_stack}.
+The processing pipeline is implemented in Python and rests on a small set of established scientific libraries, each confined to a well-defined role. Neurophysiological input and event extraction are handled by MNE-Python~\parencite{gramfort2013meg}; the multi-level wavelet decomposition and its inverse are computed with PyWavelets~\parencite{lee2019pywavelets}; the Extended Isolation Forest is provided by the \texttt{isotree} library~\parencite{cortes2019distance}; and the non-parametric statistical procedures draw on \texttt{scipy} and \texttt{scikit\_posthocs}~\parencite{virtanen2020scipy, terpilowski2019scikit}. The baseline methods draw on the \texttt{asrpy} implementation of Artefact Subspace Reconstruction and the FASTER-style routines supplied with the study material~\parencite{mullen2015real, nolan2010faster}. Channel-level parallelism is realised with \texttt{joblib}, which dispatches the flattened subject--channel--buffer tasks across all available cores, with the isolation forest itself also permitted to use every core during fitting. The complete software stack and the responsibility assigned to each component are listed in Table~\ref{tab:software_stack}.
 
 \section{Baseline Denoising Methods}
 \label{sec:baseline_methods}
  
-Assessing the effect of the buffer size in isolation establishes how onEEGwaveLAD behaves
-internally, but it does not indicate how that behaviour compares with denoising methods already
-established in the literature. To provide this external reference, and following the evaluation
-design of the framework's originating study~\parencite{longo2025oneegwavelad}, five automated
-baselines are evaluated alongside the seven buffer configurations under an identical preprocessing
-and scoring procedure. All five operate without manual intervention, matching the automated,
-reference-free character that the online setting demands, and each produces a denoised
-thirty-channel output that is average-re-referenced in the same manner as the onEEGwaveLAD outputs
-before evaluation. The methods and their principal settings are summarised in
-Table~\ref{tab:baselines}.
+Assessing the effect of the buffer size in isolation establishes how onEEGwaveLAD behaves internally, but it does not indicate how that behaviour compares with denoising methods already established in the literature. To provide this external reference, and following the evaluation design of the framework's originating study~\parencite{longo2025oneegwavelad}, five automated baselines are evaluated alongside the seven buffer configurations under an identical preprocessing and scoring procedure. All five operate without manual intervention, matching the automated, reference-free character that the online setting demands, and each produces a denoised thirty-channel output that is average-re-referenced in the same manner as the onEEGwaveLAD outputs before evaluation. The methods and their principal settings are summarised in Table~\ref{tab:baselines}.
 
 \begin{table}[!htb]
     \centering
@@ -771,42 +656,14 @@ Table~\ref{tab:baselines}.
     \label{tab:baselines}
 \end{table}
 
-The first baseline is an automatic Independent Component Analysis procedure in the style of the
-FASTER pipeline~\parencite{nolan2010faster}. It decomposes the signal, characterises each component through a set of statistical 
-properties, and rejects those flagged as artifactual before reconstructing the 
-signal from the remainder. The rejection combines five descriptors, comprising a spatial kurtosis, a
-slope in the filter band, the Hurst exponent, a measure of maximum gradient and a correlation with
-the vertical electrooculographic channel, and a component is discarded when its standardised value
-on these descriptors exceeds a threshold of three. The vertical EOG derivation therefore serves
-here as the means of identifying ocular components, which is the role for which it is retained in
-the dataset.
+The first baseline is an automatic Independent Component Analysis procedure in the style of the FASTER pipeline~\parencite{nolan2010faster}. It decomposes the signal, characterises each component through a set of statistical properties, and rejects those flagged as artifactual before reconstructing the signal from the remainder. The rejection combines five descriptors, comprising a spatial kurtosis, a slope in the filter band, the Hurst exponent, a measure of maximum gradient and a correlation with the vertical electrooculographic channel, and a component is discarded when its standardised value on these descriptors exceeds a threshold of three. The vertical EOG derivation therefore serves here as the means of identifying ocular components, which is the role for which it is retained in the dataset.
 
-The remaining four baselines are variants of Artefact Subspace Reconstruction, a method that
-identifies high-variance segments relative to a calibrated model of clean data and reconstructs
-them from the retained subspace~\parencite{mullen2015real}. Two dimensions are varied. The first
-is the calibration regime: an offline variant calibrates on the full recording and pre-cleans it,
-whereas an online variant calibrates on a limited number of one-second windows to mimic a system
-that must begin operating without access to the entire session. The second is the cutoff
-parameter that sets how aggressively segments are reconstructed, evaluated at values of thirteen
-and twenty. Crossing these two dimensions yields the four configurations reported here, namely the
-offline and online regimes each at cutoffs of thirteen and twenty. Together with the FASTER-style
-procedure, these baselines span both retrospective and streaming operation, providing a reference
-against which the buffer-size behaviour of onEEGwaveLAD is judged within the common statistical
-analysis described in Section~\ref{sec:evaluation_workflow}.
+The remaining four baselines are variants of Artefact Subspace Reconstruction, a method that identifies high-variance segments relative to a calibrated model of clean data and reconstructs them from the retained subspace~\parencite{mullen2015real}. Two dimensions are varied. The first is the calibration regime: an offline variant calibrates on the full recording and pre-cleans it, whereas an online variant calibrates on a limited number of one-second windows to mimic a system that must begin operating without access to the entire session. The second is the cutoff parameter that sets how aggressively segments are reconstructed, evaluated at values of thirteen and twenty. Crossing these two dimensions yields the four configurations reported here, namely the offline and online regimes each at cutoffs of thirteen and twenty. Together with the FASTER-style procedure, these baselines span both retrospective and streaming operation, providing a reference against which the buffer-size behaviour of onEEGwaveLAD is judged within the common statistical analysis described in Section~\ref{sec:evaluation_workflow}.
 
 \section{Evaluation Workflow}
 \label{sec:evaluation_workflow}
 
-The evaluation workflow converts each denoised window into quantitative scores 
-and submits those scores to a three-tier statistical strategy, where each tier 
-addresses a distinct research question. The design is shaped by two requirements. First, the ERP-CORE recordings 
-provide no perfectly clean reference against which a denoised signal can be compared directly, so 
-the notions of signal and noise required by the error metrics must be operationalised from the 
-event structure of the data. Second, the metrics span heterogeneous scales and directions of merit, so they 
-must be converted into a common ranking before any method can be declared superior. 
-The three tiers of analysis, summarised in Table~\ref{tab:three_tier_analysis}, 
-play complementary roles in establishing the convergence lower bound and 
-situating it relative to established denoising methods.
+The evaluation workflow converts each denoised window into quantitative scores and submits those scores to a three-tier statistical strategy, where each tier addresses a distinct research question. The design is shaped by two requirements. First, the ERP-CORE recordings provide no perfectly clean reference against which a denoised signal can be compared directly, so the notions of signal and noise required by the error metrics must be operationalised from the event structure of the data. Second, the metrics span heterogeneous scales and directions of merit, so they must be converted into a common ranking before any method can be declared superior. The three tiers of analysis, summarised in Table~\ref{tab:three_tier_analysis}, play complementary roles in establishing the convergence lower bound and situating it relative to established denoising methods.
 
 \begin{table}[!htb]
     \centering
@@ -839,39 +696,15 @@ situating it relative to established denoising methods.
     \label{tab:three_tier_analysis}
 \end{table}
 
-The following subsections describe how the metric suite is computed in code under these 
-constraints, how the raw metric values are converted into ranks that can be aggregated across 
+The following subsections describe how the metric suite is computed in code under these constraints, how the raw metric values are converted into ranks that can be aggregated across 
 heterogeneous scales, and how the resulting ranks are tested for statistical significance.
 
 \subsection{Automated Batch Evaluation Metrics Formulation}
 \label{subsec:automated_batch_metrics}
  
-The evaluation is performed by a dedicated batch module that receives, for every combination of
-subject, channel and buffer size, the original and denoised signals together with the stimulus
-events extracted during ingestion. The seven metric families, namely the difference in SNR and PSNR, RMSE, Pearson correlation,
-mutual information, band power preservation error and magnitude squared coherence, are each
-computed for the window under assessment. Because band power preservation error and coherence
-are evaluated separately for the delta, theta, alpha, beta and gamma bands, the seven families
-expand into fifteen scalar quantities per denoised signal, providing complementary views of
-amplitude fidelity, statistical dependence and spectral preservation. All fifteen are written to a master results table alongside the recorded per-window 
-latency, so the statistical analysis operates on a single, uniform record for the 
-entire grid.
+The evaluation is performed by a dedicated batch module that receives, for every combination of subject, channel and buffer size, the original and denoised signals together with the stimulus events extracted during ingestion. The seven metric families, namely the difference in SNR and PSNR, RMSE, Pearson correlation, mutual information, band power preservation error and magnitude squared coherence, are each computed for the window under assessment. Because band power preservation error and coherence are evaluated separately for the delta, theta, alpha, beta and gamma bands, the seven families expand into fifteen scalar quantities per denoised signal, providing complementary views of amplitude fidelity, statistical dependence and spectral preservation. All fifteen are written to a master results table alongside the recorded per-window latency, so the statistical analysis operates on a single, uniform record for the entire grid.
 
-The fifteen scalar quantities can be organised into two principal categories that differ in their 
-directional preferences and in the aspect of denoising quality they assess. The 
-similarity-oriented category, comprising ten metrics (Pearson correlation, mutual 
-information, RMSE, the five band power preservation errors, and magnitude squared coherence in 
-the alpha and beta bands), measures how closely the denoised signal preserves the structure of 
-the original recording; these metrics generally favour larger buffers that provide a stable 
-reference for the anomaly detector and exhibit monotonically improving trajectories as $B_s$ 
-increases. The artefact-removal category, comprising five metrics (the differences in 
-SNR and PSNR computed from the event-locked responses, and magnitude squared coherence in 
-the gamma, theta and delta bands), assesses the enhancement of the 
-signal-to-noise ratio attributable to denoising; these metrics favour smaller buffers that 
-aggressively attenuate contamination and exhibit non-monotonic behaviour at large $B_s$, where 
-the conservative mitigation applied to stable buffers removes less artefactual energy. This heterogeneity affects the aggregation strategy, as discussed in 
-Section~\ref{subsec:convergence_lower_bound}, and is revisited among the 
-limitations in Section~\ref{sec:assumptions_strengths_limitations}. To aid interpretation of the convergence analysis reported in Chapter~\ref{chap:results}, Figure~\ref{fig:metric_categories} organises the fifteen metrics by their directional preferences and behavioural characteristics across the buffer size grid.
+The fifteen scalar quantities can be organised into two principal categories that differ in their directional preferences and in the aspect of denoising quality they assess. The similarity-oriented category, comprising ten metrics (Pearson correlation, mutual information, RMSE, the five band power preservation errors, and magnitude squared coherence in the alpha and beta bands), measures how closely the denoised signal preserves the structure of the original recording; these metrics generally favour larger buffers that provide a stable reference for the anomaly detector and exhibit monotonically improving trajectories as $B_s$ increases. The artefact-removal category, comprising five metrics (the differences in SNR and PSNR computed from the event-locked responses, and magnitude squared coherence in the gamma, theta and delta bands), assesses the enhancement of the signal-to-noise ratio attributable to denoising; these metrics favour smaller buffers that aggressively attenuate contamination and exhibit non-monotonic behaviour at large $B_s$, where the conservative mitigation applied to stable buffers removes less artefactual energy. This heterogeneity affects the aggregation strategy, as discussed in  Section~\ref{subsec:convergence_lower_bound}, and is revisited among the limitations in Section~\ref{sec:assumptions_strengths_limitations}. To aid interpretation of the convergence analysis reported in Chapter~\ref{chap:results}, Figure~\ref{fig:metric_categories} organises the fifteen metrics by their directional preferences and behavioural characteristics across the buffer size grid.
 
 \begin{figure}[!htb]
 \hrule\vspace{0.5em}
@@ -889,84 +722,24 @@ This categorisation is not merely a post-hoc observation but reflects a fundamen
 \subsubsection{Computation of Time-Domain Errors (SNR, PSNR, RMSE)}
 \label{subsubsec:computation_time_domain}
  
-The central difficulty in computing the signal-to-noise metrics of 
-Equations~\ref{eq:snr}--\ref{eq:psnr} is the absence of a ground-truth clean 
-signal in a naturalistic recording. Rather than estimating the removed energy as 
-noise, which would reward indiscriminate smoothing, the module uses the event 
-structure of the recording as the reference. Using the stimulus markers obtained through \texttt{mne.events\_from\_annotations}, 
-the signal term is taken from the stimulus-locked response and the noise term from 
-the pre-stimulus baseline variance, so the resulting figures reflect the preservation 
-of a physiological response relative to its own baseline. The differences
-$\mathrm{SNR}_{\mathrm{diff}}$ and $\mathrm{PSNR}_{\mathrm{diff}}$ between the raw and denoised
-signals are reported, as defined in Section~\ref{subsec:time_domain_metrics}, while RMSE
-(Equation~\ref{eq:rmse}) is computed directly between the two time series. In this real-mode
-evaluation the reference and the raw signal are both taken from the average-re-referenced original
-recording, and the denoised signal is the average-re-referenced output of the method under
-assessment, so that all three are expressed on a common footing. A consequence of this
-event-based definition is that the signal-to-noise figures are only defined for recordings that
-carry usable stimulus annotations, a delimitation returned to in
-Section~\ref{sec:assumptions_strengths_limitations}.
+The central difficulty in computing the signal-to-noise metrics of Equations~\ref{eq:snr}--\ref{eq:psnr} is the absence of a ground-truth clean signal in a naturalistic recording. Rather than estimating the removed energy as noise, which would reward indiscriminate smoothing, the module uses the event structure of the recording as the reference. Using the stimulus markers obtained through \texttt{mne.events\_from\_annotations}, the signal term is taken from the stimulus-locked response and the noise term from the pre-stimulus baseline variance, so the resulting figures reflect the preservation of a physiological response relative to its own baseline. The differences $\mathrm{SNR}_{\mathrm{diff}}$ and $\mathrm{PSNR}_{\mathrm{diff}}$ between the raw and denoised signals are reported, as defined in Section~\ref{subsec:time_domain_metrics}, while RMSE (Equation~\ref{eq:rmse}) is computed directly between the two time series. In this real-mode evaluation the reference and the raw signal are both taken from the average-re-referenced original recording, and the denoised signal is the average-re-referenced output of the method under assessment, so that all three are expressed on a common footing. A consequence of this event-based definition is that the signal-to-noise figures are only defined for recordings that carry usable stimulus annotations, a delimitation returned to in Section~\ref{sec:assumptions_strengths_limitations}.
 
 \subsubsection{Computation of Statistical Similarity (Pearson Corr. and MI)}
 \label{subsubsec:computation_statistical}
  
-The statistical metrics quantify how much of the structure of the original signal survives
-denoising, independently of absolute amplitude. The Pearson correlation coefficient
-(Equation~\ref{eq:cc}) is computed between the original and denoised time series to measure linear
-waveform agreement, while mutual information (Equation~\ref{eq:mi}) captures non-linear dependence
-that correlation alone cannot express. Both are obtained per window from the paired samples of the two signals, so a 
-loss of shared structure, whether through over-attenuation or through the 
-injection of spurious activity, is registered as a reduction in the corresponding 
-score.
-Because a higher value denotes greater preservation for both, these two quantities enter the
-ranking with the same orientation and require no sign adjustment.
+The statistical metrics quantify how much of the structure of the original signal survives denoising, independently of absolute amplitude. The Pearson correlation coefficient (Equation~\ref{eq:cc}) is computed between the original and denoised time series to measure linear waveform agreement, while mutual information (Equation~\ref{eq:mi}) captures non-linear dependence that correlation alone cannot express. Both are obtained per window from the paired samples of the two signals, so a loss of shared structure, whether through over-attenuation or through the injection of spurious activity, is registered as a reduction in the corresponding score. Because a higher value denotes greater preservation for both, these two quantities enter the ranking with the same orientation and require no sign adjustment.
 
 \subsubsection{Computation of Spectral Preservation (BPPE and MSC)}
 \label{subsubsec:computation_spectral}
  
-The spectral metrics assess whether denoising distorts the distribution of energy across the
-clinical frequency bands. Band power preservation error (Equation~\ref{eq:bppe}) is computed as
-the relative deviation in band power between the original and denoised signals for each of the
-delta, theta, alpha, beta and gamma bands, and magnitude squared coherence
-(Equation~\ref{eq:msc}) is evaluated over the same bands. As noted in
-Section~\ref{subsec:frequency_domain_metrics}, coherence estimated over a single continuous block
-degenerates to unity, so it is computed with Welch's method of overlapping, averaged segments.
-The segment length is set from a baseline of $2048$ samples and clipped to the 
-available signal length at run time, taking $n_{\mathrm{perseg}} = \min(2048, N)$ 
-with $N$ the number of paired samples; within a short online window this averaging 
-necessarily lowers the frequency resolution, a trade-off accepted so coherence 
-remains well defined. These band-resolved quantities are
-interpreted according to the role of each band. Coherence in the alpha and beta bands is treated
-as a signal to be preserved, so a higher value is better, whereas coherence in the delta, theta
-and gamma bands is treated as reflecting ocular and muscular contamination, so a lower value,
-indicating that this interference no longer tracks the reference, is better. The band power
-preservation errors are minimised in every band. This orientation is made explicit because it
-determines the direction in which each metric enters the ranking.
+The spectral metrics assess whether denoising distorts the distribution of energy across the clinical frequency bands. Band power preservation error (Equation~\ref{eq:bppe}) is computed as the relative deviation in band power between the original and denoised signals for each of the delta, theta, alpha, beta and gamma bands, and magnitude squared coherence (Equation~\ref{eq:msc}) is evaluated over the same bands. As noted in Section~\ref{subsec:frequency_domain_metrics}, coherence estimated over a single continuous block degenerates to unity, so it is computed with Welch's method of overlapping, averaged segments. The segment length is set from a baseline of $2048$ samples and clipped to the available signal length at run time, taking $n_{\mathrm{perseg}} = \min(2048, N)$ with $N$ the number of paired samples; within a short online window this averaging necessarily lowers the frequency resolution, a trade-off accepted so coherence remains well defined. These band-resolved quantities are interpreted according to the role of each band. Coherence in the alpha and beta bands is treated as a signal to be preserved, so a higher value is better, whereas coherence in the delta, theta and gamma bands is treated as reflecting ocular and muscular contamination, so a lower value, indicating that this interference no longer tracks the reference, is better. The band power preservation errors are minimised in every band. This orientation is made explicit because it determines the direction in which each metric enters the ranking.
 
 \subsection{Non-Parametric Statistical Tests Strategy}
 \label{subsec:non_parametric_tests}
 
-The denoising scores cannot be assumed to be normally distributed across subjects and channels,
-so the comparison of methods relies on non-parametric procedures applied to ranks rather than to
-raw values. The aggregation follows a rank-then-aggregate protocol~\parencite{friedman1937use}: at the lowest level, 
-each of the fifteen metrics is converted into a rank for every channel of every subject, with a 
-rank of one consistently denoting the best-performing configuration regardless of the native 
-orientation of the metric (metrics for which a lower value denotes better performance, such as 
-RMSE, the PSNR difference and the band power preservation errors, are sign-inverted before ranking, 
-so that the rank order is uniform). Critically, this ranking operation is performed \emph{before} any aggregation: within each subject--channel--metric combination, the twelve methods are ranked from 1 (best) to 12 (worst) on the raw metric values, and only then are these \emph{rank} values averaged--first across the fifteen metrics to yield a composite rank per channel, and subsequently across channels and subjects according to one of three complementary configurations that differ in whether subjects and channels are treated individually or pooled. This rank-then-aggregate order ensures that metrics with heterogeneous scales and opposing directional preferences are reconciled into a common ordinal comparison before any averaging occurs, preventing any single metric from dominating the composite score by virtue of its numerical range.
+The denoising scores cannot be assumed to be normally distributed across subjects and channels, so the comparison of methods relies on non-parametric procedures applied to ranks rather than to raw values. The aggregation follows a rank-then-aggregate protocol~\parencite{friedman1937use}: at the lowest level, each of the fifteen metrics is converted into a rank for every channel of every subject, with a rank of one consistently denoting the best-performing configuration regardless of the native orientation of the metric (metrics for which a lower value denotes better performance, such as RMSE, the PSNR difference and the band power preservation errors, are sign-inverted before ranking, so that the rank order is uniform). Critically, this ranking operation is performed \emph{before} any aggregation: within each subject--channel--metric combination, the twelve methods are ranked from 1 (best) to 12 (worst) on the raw metric values, and only then are these \emph{rank} values averaged--first across the fifteen metrics to yield a composite rank per channel, and subsequently across channels and subjects according to one of three complementary configurations that differ in whether subjects and channels are treated individually or pooled. This rank-then-aggregate order ensures that metrics with heterogeneous scales and opposing directional preferences are reconciled into a common ordinal comparison before any averaging occurs, preventing any single metric from dominating the composite score by virtue of its numerical range.
 
-The ranked scores are organised under three aggregations, each of which ranks the twelve methods 
-(namely the seven buffer configurations and the five baselines) jointly. In the first, 
-metric-aggregated and single-subject, each subject is analysed in isolation: the ranks 
-of the fifteen metrics are averaged within each channel, yielding a $30 \times 12$ matrix of 
-channels against methods that is tested separately for every subject. In the second, 
-channel-specific and multiple-subjects, the subjects are pooled while the channel 
-dimension is retained, so that each channel of each of the thirty subjects contributes an 
-independent row and the rank matrix has shape $900 \times 12$. In the third, 
-channel-aggregated and multiple-subjects, the channel ranks are further averaged within 
-each subject to form a single composite row per subject, giving a $30 \times 12$ matrix that 
-assesses the methods at the subject level. These configurations, and the tests applied to each, 
-are summarised in Table~\ref{tab:statistical_tests}.
+The ranked scores are organised under three aggregations, each of which ranks the twelve methods (namely the seven buffer configurations and the five baselines) jointly. In the first, metric-aggregated and single-subject, each subject is analysed in isolation: the ranks of the fifteen metrics are averaged within each channel, yielding a $30 \times 12$ matrix of channels against methods that is tested separately for every subject. In the second, channel-specific and multiple-subjects, the subjects are pooled while the channel dimension is retained, so that each channel of each of the thirty subjects contributes an independent row and the rank matrix has shape $900 \times 12$. In the third, channel-aggregated and multiple-subjects, the channel ranks are further averaged within each subject to form a single composite row per subject, giving a $30 \times 12$ matrix that assesses the methods at the subject level. These configurations, and the tests applied to each, are summarised in Table~\ref{tab:statistical_tests}.
 
 \begin{table}[!htb]
     \centering
@@ -997,52 +770,17 @@ channels.}
     \label{tab:statistical_tests}
 \end{table}
 
-Global significance is assessed in every configuration with the Friedman test, a non-parametric
-analogue of the repeated-measures analysis of variance suitable for ranked
-data~\parencite{friedman1937use}, applied through \texttt{scipy.stats.friedmanchisquare}. The
-test evaluates whether the twelve methods share the same average rank against the
-alternative that at least one differs, with the statistic approximately chi-squared distributed
-under the null across the methods. Assessing it under the three aggregations described above
-distinguishes effects that hold at the level of individual subjects, that persist across the
-electrode space when subjects are pooled, and that survive once channels are summarised into a
+Global significance is assessed in every configuration with the Friedman test, a non-parametric analogue of the repeated-measures analysis of variance suitable for ranked data~\parencite{friedman1937use}, applied through \texttt{scipy.stats.friedmanchisquare}. The test evaluates whether the twelve methods share the same average rank against the alternative that at least one differs, with the statistic approximately chi-squared distributed under the null across the methods. Assessing it under the three aggregations described above distinguishes effects that hold at the level of individual subjects, that persist across the electrode space when subjects are pooled, and that survive once channels are summarised into a
 single per-subject value.
 
-A significant Friedman result establishes that the methods differ but does not identify which
-pairs are responsible. Across all three configurations the Nemenyi post-hoc test~\parencite{nemenyi1963distribution} is applied
-through \texttt{scikit\_posthocs.posthoc\_nemenyi\_friedman}, which declares two methods
-significantly different when the gap between their average ranks exceeds the critical difference
-at the chosen significance level, and whose outcome is rendered as a critical difference diagram
-in the results chapter. For the single-subject configuration, where a within-subject post-hoc test
-must contend with far fewer observations, the Nemenyi comparison is complemented by the Wilcoxon
-signed-rank test~\parencite{wilcoxon1945individual} applied to each pair of methods, with the resulting $p$-values corrected for
-multiple comparisons through the Holm--Bonferroni procedure~\parencite{holm1979simple} (\texttt{method='holm'}) to control
-the family-wise error rate. This layered strategy provides a global test in each configuration,
-two independent accounts of the per-subject pairwise differences, and an aggregated view across
-the full cohort.
+A significant Friedman result establishes that the methods differ but does not identify which pairs are responsible. Across all three configurations the Nemenyi post-hoc test is applied through \texttt{scikit\_posthocs.posthoc\_nemenyi\_friedman}, which declares two methods significantly different when the gap between their average ranks exceeds the critical difference at the chosen significance level, and whose outcome is rendered as a critical difference diagram in the results chapter. For the single-subject configuration, where a within-subject post-hoc test must contend with far fewer observations, the Nemenyi comparison is complemented by the Wilcoxon signed-rank test~\parencite{wilcoxon1945individual} applied to each pair of methods, with the resulting $p$-values corrected for multiple comparisons through the Holm--Bonferroni procedure~\parencite{holm1979simple} (\texttt{method='holm'}) to control the family-wise error rate. This layered strategy provides a global test in each configuration, two independent accounts of the per-subject pairwise differences, and an aggregated view across the full cohort.
 
-The rank-based tests described above establish that the buffer configurations differ 
-significantly and delimit the region within which performance is statistically distinguishable, 
-but they do not themselves locate the convergence lower bound. Because ranks compress the 
-distances between configurations, a rank-based view alone can obscure the point at which the 
-underlying metric values level off. The convergence lower bound is therefore identified through 
-the multi-criteria protocol applied to the raw metric trajectories, as detailed in 
-Section~\ref{subsec:convergence_lower_bound}, with the Friedman and Nemenyi procedures serving 
-as supporting evidence that confirms the statistical significance of the differences 
-observed in those trajectories. Reporting both the rank-based significance and the convergence 
-of the raw values provides complementary perspectives from which the lower bound is triangulated 
-in the results chapter: the former demonstrates that the methods differ at all, while the latter 
-locates where that difference ceases to be material.
+The rank-based tests described above establish that the buffer configurations differ significantly and delimit the region within which performance is statistically distinguishable, but they do not themselves locate the convergence lower bound. Because ranks compress the distances between configurations, a rank-based view alone can obscure the point at which the underlying metric values level off. The convergence lower bound is therefore identified through the multi-criteria protocol applied to the raw metric trajectories, as detailed in Section~\ref{subsec:convergence_lower_bound}, with the Friedman and Nemenyi procedures serving as supporting evidence that confirms the statistical significance of the differences observed in those trajectories. Reporting both the rank-based significance and the convergence of the raw values provides complementary perspectives from which the lower bound is triangulated in the results chapter: the former demonstrates that the methods differ at all, while the latter locates where that difference ceases to be material.
 
 \subsection{Convergence Lower Bound Identification Protocol}
 \label{subsec:convergence_lower_bound}
 
-While the Friedman and Nemenyi procedures described above test whether the buffer configurations 
-differ at all and which of them are separated by a statistically significant margin, they operate 
-on rank statistics that compress the distances between configurations and can obscure the point 
-at which the underlying metric values converge. The convergence lower bound is therefore located 
-on the trajectories of the raw metric values themselves, rather than on the rank 
-statistics, using a multi-criteria protocol that combines three complementary approaches to 
-assess when further increases in buffer size yield no material further gain. Initial attempts to locate convergence using a simple threshold-based criterion (normalised improvement falling below a fixed threshold $\tau$) proved unsuccessful, as the gradual levelling and heterogeneity across metrics prevented a clean determination of the convergence point; the composite protocol described below was developed to address this limitation by triangulating the threshold through statistical, geometric, and category-stratified analyses.
+While the Friedman and Nemenyi procedures described above test whether the buffer configurations differ at all and which of them are separated by a statistically significant margin, they operate on rank statistics that compress the distances between configurations and can obscure the point at which the underlying metric values converge. The convergence lower bound is therefore located on the trajectories of the raw metric values themselves, rather than on the rank statistics, using a multi-criteria protocol that combines three complementary approaches to assess when further increases in buffer size yield no material further gain. Initial attempts to locate convergence using a simple threshold-based criterion (normalised improvement falling below a fixed threshold $\tau$) proved unsuccessful, as the gradual levelling and heterogeneity across metrics prevented a clean determination of the convergence point; the composite protocol described below was developed to address this limitation by triangulating the threshold through statistical, geometric, and category-stratified analyses.
 
 \subsubsection{Absolute Criterion and Noise Floor}
 
@@ -1077,40 +815,17 @@ buffer size.
 
 \subsubsection{Kneedle Elbow Detection}
 
-The absolute criterion and noise floor assess convergence in terms of statistical thresholds, but 
-they do not explicitly identify the point of diminishing returns where the trajectory transitions 
-from rapid improvement to gradual levelling. To locate this transition, the parameter-free Kneedle algorithm~\parencite{satopaa2011finding}, which locates 
-the elbow through geometric curvature without requiring manual specification of a sensitivity 
-threshold, is applied to the gain curve, defined as the 
-improvement in each metric relative to the baseline configuration $B_s = 1$, expressed in units 
-of the cross-subject standard deviation. The Kneedle method fits a smooth curve to the gain 
-trajectory and identifies the point of maximum curvature, which corresponds to the elbow where 
-marginal returns begin to diminish sharply. Because the algorithm is sensitive to the axis scale, 
-the coarse-grained search employs a logarithmic (base-2) horizontal axis to reflect the 
-exponential spacing of the buffer grid, while the fine-grained refinement uses a linear axis to 
-match the equally spaced grid in the convergence region. The elbow points identified by the two 
-stages are reported separately and their consistency assessed as a robustness check.
+The absolute criterion and noise floor assess convergence in terms of statistical thresholds, but they do not explicitly identify the point of diminishing returns where the trajectory transitions from rapid improvement to gradual levelling. To locate this transition, the parameter-free Kneedle algorithm~\parencite{satopaa2011finding}, which locates the elbow through geometric curvature without requiring manual specification of a sensitivity threshold, is applied to the gain curve, defined as the improvement in each metric relative to the baseline configuration $B_s = 1$, expressed in units of the cross-subject standard deviation. The Kneedle method fits a smooth curve to the gain trajectory and identifies the point of maximum curvature, which corresponds to the elbow where marginal returns begin to diminish sharply. Because the algorithm is sensitive to the axis scale, the coarse-grained search employs a logarithmic (base-2) horizontal axis to reflect the exponential spacing of the buffer grid, while the fine-grained refinement uses a linear axis to match the equally spaced grid in the convergence region. The elbow points identified by the two  stages are reported separately and their consistency assessed as a robustness check.
 
 \subsubsection{Metric Category Stratification and Aggregation Pipelines}
 
-The fifteen metrics are not homogeneous in their directional preferences. As detailed in Section~\ref{subsec:automated_batch_metrics}, the ten similarity-oriented metrics 
-(Pearson correlation, mutual information, RMSE, five band power preservation errors, and 
-magnitude squared coherence in the alpha and beta bands only) exhibit a preference for larger buffers 
-and monotonic improvement that asymptotically approaches a noise floor, whereas the five 
-artefact-removal metrics (SNR-Diff, PSNR-Diff, and magnitude squared coherence in the theta, gamma, and delta bands) favour smaller buffers and exhibit 
-non-monotonic behaviour at large $B_s$. The inclusion of MSC theta, gamma, and delta in the artefact-removal category reflects their observed directional preference for smaller buffers, aligning with SNR-Diff and PSNR-Diff rather than the monotonically converging similarity-oriented majority.
+The fifteen metrics are not homogeneous in their directional preferences. As detailed in Section~\ref{subsec:automated_batch_metrics}, the ten similarity-oriented metrics (Pearson correlation, mutual information, RMSE, five band power preservation errors, and magnitude squared coherence in the alpha and beta bands only) exhibit a preference for larger buffers and monotonic improvement that asymptotically approaches a noise floor, whereas the five artefact-removal metrics (SNR-Diff, PSNR-Diff, and magnitude squared coherence in the theta, gamma, and delta bands) favour smaller buffers and exhibit non-monotonic behaviour at large $B_s$. The inclusion of MSC theta, gamma, and delta in the artefact-removal category reflects their observed directional preference for smaller buffers, aligning with SNR-Diff and PSNR-Diff rather than the monotonically converging similarity-oriented majority.
 
 Aggregating these heterogeneous metrics requires careful consideration of the aggregation method. Two complementary approaches are employed: arithmetic mean aggregation and median aggregation. The arithmetic mean, computed as the average of the fifteen normalised improvements (Equation~\ref{eq:normalised_improvement}), treats all metrics with equal weight but is sensitive to outliers. When applied to the full fifteen-metric suite, the mean improvement curve exhibits a rebound at large buffer sizes driven by the upward swing of SNR-Diff, which is a product of averaging oppositely directed metrics rather than a single unified effect. To mitigate this, the median aggregation pipeline is reported alongside the mean as a robustness check. The median, defined as the middle value when the fifteen normalised improvements are sorted, is less sensitive to outliers and suppresses the rebound, yielding a monotonically decreasing improvement curve that converges cleanly.
 
 However, because the median of fifteen metrics is dominated by the ten similarity-oriented metrics that form the majority, it effectively recapitulates the similarity-category trajectory rather than providing an independent third line of evidence. This distinction is made explicit in the interpretation of results. For transparency, both aggregation methods (arithmetic mean and median) are computed and reported in Chapter~\ref{chap:results}, with the convergence lower bound identified primarily through the median aggregation applied to the similarity-oriented metric family, supplemented by geometric elbow detection (Kneedle) and baseline-parity analysis (Nemenyi critical difference).
 
-The convergence lower bound reported in Chapter~\ref{chap:results} is the buffer size at which 
-these three criteria (absolute criterion, noise floor, Kneedle elbow) concur, separately for each 
-stage of the grid search and for each metric category where applicable. This composite protocol 
-provides both the statistical threshold below which changes are indistinguishable from noise and 
-the geometric transition point where the trajectory shifts from rapid improvement to gradual 
-convergence, reconciling the rank-based significance tests with the convergence behaviour observed 
-in the raw metric values.
+The convergence lower bound reported in Chapter~\ref{chap:results} is the buffer size at which these three criteria (absolute criterion, noise floor, Kneedle elbow) concur, separately for each stage of the grid search and for each metric category where applicable. This composite protocol provides both the statistical threshold below which changes are indistinguishable from noise and the geometric transition point where the trajectory shifts from rapid improvement to gradual convergence, reconciling the rank-based significance tests with the convergence behaviour observed in the raw metric values.
 
 \begin{table}[!htb]
     \centering
@@ -1136,20 +851,12 @@ in the raw metric values.
 \section{Research Assumptions, Strengths and Limitations}
 \label{sec:assumptions_strengths_limitations}
 
-The empirical strategy described in this chapter rests on explicit assumptions 
-about the experimental setting, has deliberate strengths in its design, and 
-accepts certain limitations to keep the pipeline within the constraints of 
-near-real-time, single-channel operation. A clear separation is maintained between assumptions--the conditions under which the findings are valid--and limitations--the boundaries and trade-offs inherent to the experimental design. Shortcomings that only become visible once the framework is run and its outputs inspected are deferred to Chapter~\ref{chap:results}.
+The empirical strategy described in this chapter rests on explicit assumptions about the experimental setting, has deliberate strengths in its design, and accepts certain limitations to keep the pipeline within the constraints of near-real-time, single-channel operation. A clear separation is maintained between assumptions--the conditions under which the findings are valid--and limitations--the boundaries and trade-offs inherent to the experimental design. Shortcomings that only become visible once the framework is run and its outputs inspected are deferred to Chapter~\ref{chap:results}.
 
 \subsection{Fundamental Assumptions}
 \label{subsec:fundamental_assumptions}
 
-The validity of the empirical conclusions rests on three fundamental assumptions. First, the ERP-CORE N170 recordings, replayed block by block through a Python generator, serve as a faithful proxy for live acquisition, preserving the temporal causality and sample-by-sample arrival order that characterise true online operation, while acknowledging that hardware-specific variability (e.g., electromagnetic interference, electrode impedance drift) present in live deployment is not reproduced in this emulation. Second, the event-based signal-to-noise metrics (SNR-Diff and PSNR-Diff) presuppose that the stimulus annotations embedded in the ERP-CORE dataset are temporally accurate and that the N170 face-processing response is sufficiently strong and consistent across subjects to serve as a reference signal against which noise is defined; recordings with weak or absent event-related responses would render these metrics undefined. Third, the framework assumes that the sliding buffer is populated predominantly 
-by nominal cortical activity, with artefacts forming a statistical minority, so 
-the Extended Isolation Forest can learn a representative baseline of normal 
-spectral profiles from which artefacts deviate; if artefacts were to dominate 
-the buffer, the detector's notion of normality would be corrupted and anomaly 
-detection would fail.
+The validity of the empirical conclusions rests on three fundamental assumptions. First, the ERP-CORE N170 recordings, replayed block by block through a Python generator, serve as a faithful proxy for live acquisition, preserving the temporal causality and sample-by-sample arrival order that characterise true online operation, while acknowledging that hardware-specific variability (e.g., electromagnetic interference, electrode impedance drift) present in live deployment is not reproduced in this emulation. Second, the event-based signal-to-noise metrics (SNR-Diff and PSNR-Diff) presuppose that the stimulus annotations embedded in the ERP-CORE dataset are temporally accurate and that the N170 face-processing response is sufficiently strong and consistent across subjects to serve as a reference signal against which noise is defined; recordings with weak or absent event-related responses would render these metrics undefined. Third, the framework assumes that the sliding buffer is populated predominantly by nominal cortical activity, with artefacts forming a statistical minority, so the Extended Isolation Forest can learn a representative baseline of normal  spectral profiles from which artefacts deviate; if artefacts were to dominate the buffer, the detector's notion of normality would be corrupted and anomaly detection would fail.
 
 These assumptions are testable within the scope of the present study and are addressed through the experimental design: temporal causality is verified by the non-overlapping windowing mechanism (Section~\ref{sec:data_prep_streaming}), event marker integrity is inherited from the ERP-CORE curation procedures~\parencite{kappenman2021erp}, and the minority-artefact assumption is validated qualitatively through the diagnostic visualisations in Section~\ref{subsec:qualitative_visualization}, which confirm that contamination is episodic rather than sustained.
 
@@ -1184,36 +891,14 @@ Three independent lines of evidence are employed to triangulate the location of 
 \section{Data Understanding: Raw Signal Observations}
 \label{sec:results_data_understanding}
 
-The N170 recordings comprise thirty subjects with thirty EEG channels sampled at $1024$ Hz. Raw signals exhibit characteristic contamination: frontal channels (FP1, FP2, F3, F4, F7, F8) display frequent high-amplitude deflections from eye blinks and saccades (peak-to-peak excursions routinely exceeding $\pm 100~\mu$V, occasionally beyond $\pm 200~\mu$V), while posterior and central electrodes (O1, O2, Oz, Cz, CPz) show lower baseline amplitudes (typically $\pm 30~\mu$V outside stimulus epochs) with correspondingly smaller artefact contamination. Stimulus markers are dense (inter-stimulus intervals averaging 1.5-2.0 seconds), ensuring sufficient trial counts for stable metric estimates (Section~\ref{subsubsec:computation_time_domain}). Contamination is episodic rather than uniform: extended intervals of clean cortical 
-activity are punctuated by ocular interference bursts, typically coinciding with 
-inter-trial rest periods, motivating the sliding-buffer mechanism adopted by 
-onEEGwaveLAD, since a fixed calibration derived from the entire recording would 
-conflate clean and contaminated states, whereas a buffer that tracks recent history 
-can adapt as the contamination waxes and wanes. The thirty-channel montage spans 
-the full extent of the scalp, from frontal to occipital and from left to right 
-hemispheres, so the evaluation reported in subsequent sections reflects the 
-framework's behaviour under heterogeneous contamination profiles rather than a 
-single favourable electrode placement.
+The N170 recordings comprise thirty subjects with thirty EEG channels sampled at $1024$ Hz. Raw signals exhibit characteristic contamination: frontal channels (FP1, FP2, F3, F4, F7, F8) display frequent high-amplitude deflections from eye blinks and saccades (peak-to-peak excursions routinely exceeding $\pm 100~\mu$V, occasionally beyond $\pm 200~\mu$V), while posterior and central electrodes (O1, O2, Oz, Cz, CPz) show lower baseline amplitudes (typically $\pm 30~\mu$V outside stimulus epochs) with correspondingly smaller artefact contamination. Stimulus markers are dense (inter-stimulus intervals averaging 1.5-2.0 seconds), ensuring sufficient trial counts for stable metric estimates (Section~\ref{subsubsec:computation_time_domain}). Contamination is episodic rather than uniform: extended intervals of clean cortical activity are punctuated by ocular interference bursts, typically coinciding with inter-trial rest periods, motivating the sliding-buffer mechanism adopted by onEEGwaveLAD, since a fixed calibration derived from the entire recording would conflate clean and contaminated states, whereas a buffer that tracks recent history can adapt as the contamination waxes and wanes. The thirty-channel montage spans the full extent of the scalp, from frontal to occipital and from left to right hemispheres, so the evaluation reported in subsequent sections reflects the framework's behaviour under heterogeneous contamination profiles rather than a single favourable electrode placement.
 
-Preprocessing applied the $1$~Hz high-pass filter uniformly across all channels and subjects, 
-attenuating very slow drift without removing the delta-band activity that contributes to the 
-ERP waveform, and the average re-referencing step collapsed the common-mode noise shared 
-across electrodes. After this preprocessing but before denoising, the frontal channels remain 
-the most heavily contaminated, the posterior channels the cleanest, and the intermediate 
-electrodes occupy a gradient between these extremes. This gradient is retained throughout the evaluation, so the convergence lower bound 
-identified in Section~\ref{subsec:identification_threshold} reflects performance 
-averaged over channels with widely varying baseline signal quality rather than being 
-tuned to a single contamination regime.
+Preprocessing applied the $1$~Hz high-pass filter uniformly across all channels and subjects, attenuating very slow drift without removing the delta-band activity that contributes to the ERP waveform, and the average re-referencing step collapsed the common-mode noise shared across electrodes. After this preprocessing but before denoising, the frontal channels remain  the most heavily contaminated, the posterior channels the cleanest, and the intermediate electrodes occupy a gradient between these extremes. This gradient is retained throughout the evaluation, so the convergence lower bound identified in Section~\ref{subsec:identification_threshold} reflects performance averaged over channels with widely varying baseline signal quality rather than being tuned to a single contamination regime.
 
 \section{Data Preparation Outcomes and Streaming Verification}
 \label{sec:data_prep_outcomes}
 
-The data preparation phase comprises two complementary verification steps. The first confirms the integrity of the pseudo-real-time windowing mechanism and 
-validates that the streaming emulation operates without frame-dropping or alignment 
-errors. The second provides qualitative diagnostic visualisations of the 
-anomaly-detection pipeline's internal behaviour across multiple representational 
-stages to establish that the Extended Isolation Forest correctly identifies and 
-mitigates artefacts in the wavelet domain. The windowing mechanism described in Section~\ref{sec:data_prep_streaming} was verified to produce non-overlapping, causally ordered blocks of $1024$ samples at the native sampling frequency of $1024$~Hz, corresponding to a physical duration of $1000$~ms per window. The alignment of samples to the nearest power of two, a requirement for efficient DWT computation, introduced negligible temporal distortion (less than $0.1\%$ deviation from the target window length) and was confirmed to preserve the correspondence between stimulus markers and signal epochs. The batch evaluation pipeline completed without encountering undefined states or frame-dropping artefacts across the thirty subjects and all buffer configurations, validating the robustness of the streaming emulation under the real-mode evaluation protocol.
+The data preparation phase comprises two complementary verification steps. The first confirms the integrity of the pseudo-real-time windowing mechanism and validates that the streaming emulation operates without frame-dropping or alignment errors. The second provides qualitative diagnostic visualisations of the anomaly-detection pipeline's internal behaviour across multiple representational stages to establish that the Extended Isolation Forest correctly identifies and  mitigates artefacts in the wavelet domain. The windowing mechanism described in Section~\ref{sec:data_prep_streaming} was verified to produce non-overlapping, causally ordered blocks of $1024$ samples at the native sampling frequency of $1024$~Hz, corresponding to a physical duration of $1000$~ms per window. The alignment of samples to the nearest power of two, a requirement for efficient DWT computation, introduced negligible temporal distortion (less than $0.1\%$ deviation from the target window length) and was confirmed to preserve the correspondence between stimulus markers and signal epochs. The batch evaluation pipeline completed without encountering undefined states or frame-dropping artefacts across the thirty subjects and all buffer configurations, validating the robustness of the streaming emulation under the real-mode evaluation protocol.
 
     \subsection{Qualitative Diagnostic Visualisation of Denoising Pipeline}
 \label{subsec:qualitative_visualization}
@@ -1377,32 +1062,9 @@ The shift in the identified elbow from $B_s = 4$ (Stage~1) to $B_s = 8$ (Stage~2
 
 The second line of evidence derives from the non-parametric ranking framework and provides a complementary definition of the convergence lower bound that is independent of the marginal improvement calculation. Within the subset of comparisons that include only the seven onEEGwaveLAD buffer configurations (excluding the five baseline methods), a Friedman test was performed across the thirty subjects under the channel-aggregated configuration, yielding a highly significant effect of buffer size ($\chi^2 = 177.10$, $p = 1.40 \times 10^{-35}$, $N = 30$, $k = 7$). Post-hoc analysis via the Nemenyi test established a critical difference threshold of $\mathrm{CD} = 1.163$, such that any pair of buffer sizes whose mean ranks differ by more than this value are statistically distinguishable at the $\alpha = 0.05$ level (Figure~\ref{fig:cd_bs_only}).
 
-The rank ordering across the seven configurations is strictly monotonic, with $B_s = 64$ achieving
-the best mean rank ($3.098$), followed by $B_s = 32$ ($3.315$), $B_s = 16$ ($3.634$),
-$B_s = 8$ ($3.965$), $B_s = 4$ ($4.312$), $B_s = 2$ ($4.671$) and $B_s = 1$ ($5.004$). The
-Nemenyi procedure resolves this ordering into four overlapping cliques of statistically
-indistinguishable configurations, spanning $B_s = 64$ to $B_s = 8$, $B_s = 32$ to $B_s = 4$,
-$B_s = 16$ to $B_s = 2$, and $B_s = 8$ to $B_s = 1$. Within the first of these,
-$B_s = 8$ is the smallest buffer whose mean rank lies within the critical difference of the
-best-performing configuration ($|3.098 - 3.965| = 0.867 < \mathrm{CD}$), whereas $B_s = 4$ falls
-outside that interval ($|3.098 - 4.312| = 1.214 > \mathrm{CD}$) and is therefore separated from the
-plateau. Read against the operational definition adopted in
-Section~\ref{subsec:literature_gaps_hypotheses}, this places the rank-based lower bound at
-$B_s = 8$.
+The rank ordering across the seven configurations is strictly monotonic, with $B_s = 64$ achieving the best mean rank ($3.098$), followed by $B_s = 32$ ($3.315$), $B_s = 16$ ($3.634$), $B_s = 8$ ($3.965$), $B_s = 4$ ($4.312$), $B_s = 2$ ($4.671$) and $B_s = 1$ ($5.004$). The Nemenyi procedure resolves this ordering into four overlapping cliques of statistically indistinguishable configurations, spanning $B_s = 64$ to $B_s = 8$, $B_s = 32$ to $B_s = 4$, $B_s = 16$ to $B_s = 2$, and $B_s = 8$ to $B_s = 1$. Within the first of these, $B_s = 8$ is the smallest buffer whose mean rank lies within the critical difference of the best-performing configuration ($|3.098 - 3.965| = 0.867 < \mathrm{CD}$), whereas $B_s = 4$ falls outside that interval ($|3.098 - 4.312| = 1.214 > \mathrm{CD}$) and is therefore separated from the plateau. Read against the operational definition adopted in Section~\ref{subsec:literature_gaps_hypotheses}, this places the rank-based lower bound at $B_s = 8$.
 
-The overlapping structure of these cliques must be acknowledged rather than passed over, since it
-delimits how much weight this criterion can carry. The fourth clique groups $B_s = 8$ with
-$B_s = 1$, so the same test that fails to separate $B_s = 8$ from the best configuration also fails
-to separate it from the worst; with thirty subjects the critical difference of $1.1631$ is wide
-relative to the total spread of mean ranks ($1.906$ from $B_s = 64$ to $B_s = 1$), and the
-procedure consequently possesses limited resolution in the interior of the grid. What the analysis
-establishes unambiguously is an ordering and an exclusion: performance improves monotonically with
-buffer depth, and $B_s = 4$ and below are separated from the top of that ordering while $B_s = 8$ is
-not. Because the criterion cannot by itself isolate a unique threshold, it is reported as one of
-three converging lines of evidence rather than as a self-sufficient determination, and its agreement
-with the elbow analysis of Evidence Line~1 -- which operates on raw metric trajectories and is
-unaffected by the width of the Nemenyi interval -- is what renders the estimate at $B_s = 8$
-defensible.
+The overlapping structure of these cliques must be acknowledged rather than passed over, since it delimits how much weight this criterion can carry. The fourth clique groups $B_s = 8$ with $B_s = 1$, so the same test that fails to separate $B_s = 8$ from the best configuration also fails to separate it from the worst; with thirty subjects the critical difference of $1.1631$ is wide relative to the total spread of mean ranks ($1.906$ from $B_s = 64$ to $B_s = 1$), and the procedure consequently possesses limited resolution in the interior of the grid. What the analysis establishes unambiguously is an ordering and an exclusion: performance improves monotonically with buffer depth, and $B_s = 4$ and below are separated from the top of that ordering while $B_s = 8$ is not. Because the criterion cannot by itself isolate a unique threshold, it is reported as one of three converging lines of evidence rather than as a self-sufficient determination, and its agreement with the elbow analysis of Evidence Line~1 -- which operates on raw metric trajectories and is unaffected by the width of the Nemenyi interval -- is what renders the estimate at $B_s = 8$ defensible.
 
 \begin{figure}[!htb]
 \hrule\vspace{0.5em}
@@ -1470,24 +1132,13 @@ The evaluation phase converts raw metric values into ranks and applies non-param
 
 The fifteen raw metric values were converted into ranks at the channel--subject level, with each of the twelve methods (seven onEEGwaveLAD buffer configurations plus five baselines) receiving a rank from $1$ (best) to $12$ (worst) for every combination of metric, subject, and channel. These ranks were then aggregated across the fifteen metrics to produce a single mean rank per method per subject--channel pair, and submitted to Friedman tests under three complementary configurations that vary in their treatment of within-subject and across-channel dependence. The three-tier analysis strategy, formalised in Table~\ref{tab:three_tier_analysis} of Chapter~\ref{chap:methodology}, assigns distinct roles to each configuration: the baseline comparison (twelve methods jointly ranked) establishes the practical significance of the convergence lower bound by demonstrating where onEEGwaveLAD attains competitive performance, the convergence bound identification (applied to raw trajectories, reported in Section~\ref{subsec:identification_threshold}) locates the buffer size at which metric values cease to change meaningfully, and the directional significance test (seven buffer configurations only, excluding baselines) confirms that buffer size exerts a statistically significant monotonic effect.
 
-\textbf{Configuration 1: Channel-aggregated, multiple subjects ($N = 30$, $k = 12$).} In this configuration, the thirty channels within each subject are first converted to ranks, and these ranks are averaged to produce a single representative rank per method per subject. The Friedman test is then applied across the thirty subjects, treating each subject as an independent replicate. This configuration balances statistical power against the assumption of independence by collapsing within-subject channel variation, and is the primary basis for interpreting the convergence lower bound because the sample size ($N = 30$) corresponds directly to the number of independent subjects in the study. The test yields $\chi^2(11) = 177.33$, $p = 3.65 \times 10^{-32}$, decisively rejecting the null
-hypothesis that all twelve methods perform equivalently. The critical difference threshold under the Nemenyi post-hoc test is 
-$\mathrm{CD} = 2.151$, so methods whose mean ranks differ by more than this value 
-are statistically distinguishable at the $\alpha = 0.05$ level.
+\textbf{Configuration 1: Channel-aggregated, multiple subjects ($N = 30$, $k = 12$).} In this configuration, the thirty channels within each subject are first converted to ranks, and these ranks are averaged to produce a single representative rank per method per subject. The Friedman test is then applied across the thirty subjects, treating each subject as an independent replicate. This configuration balances statistical power against the assumption of independence by collapsing within-subject channel variation, and is the primary basis for interpreting the convergence lower bound because the sample size ($N = 30$) corresponds directly to the number of independent subjects in the study. The test yields $\chi^2(11) = 177.33$, $p = 3.65 \times 10^{-32}$, decisively rejecting the null hypothesis that all twelve methods perform equivalently. The critical difference threshold under the Nemenyi post-hoc test is $\mathrm{CD} = 2.151$, so methods whose mean ranks differ by more than this value are statistically distinguishable at the $\alpha = 0.05$ level.
 
-\textbf{Configuration 2: Channel-specific, multiple subjects ($N = 900$, $k = 12$).} This 
-configuration treats each channel-subject pair as an independent observation. The 
-Friedman test yields $\chi^2(11) = 4104.65$, $p < 10^{-300}$, decisively rejecting 
-the null hypothesis. The critical difference is $\mathrm{CD} = 0.393$. Mean ranks 
-are numerically identical to Configuration 1 (Table~\ref{tab:ranks_across_configs}) 
-due to balanced design, differing only in the narrower critical difference resulting 
-from the larger nominal sample size.
+\textbf{Configuration 2: Channel-specific, multiple subjects ($N = 900$, $k = 12$).} This configuration treats each channel-subject pair as an independent observation. The Friedman test yields $\chi^2(11) = 4104.65$, $p < 10^{-300}$, decisively rejecting the null hypothesis. The critical difference is $\mathrm{CD} = 0.393$. Mean ranks are numerically identical to Configuration 1 (Table~\ref{tab:ranks_across_configs}) due to balanced design, differing only in the narrower critical difference resulting from the larger nominal sample size.
 
 \textbf{Configuration 3: Metric-aggregated, single-subject ($N = 30$ channels, $k = 12$, applied per subject).} This within-subject analysis performs a separate Friedman test within each of the thirty subjects. All thirty subjects yield statistically significant results ($p < 0.05$; twenty-nine yield $p < 0.01$), confirming that the monotonic buffer effect is present within nearly every individual rather than emerging only in aggregate. The critical difference is $\mathrm{CD} = 1.163$ (identical to Configuration 1).
 
-\textbf{Directional significance: Seven-buffer Friedman test.} In addition to the twelve-method comparison, a separate Friedman test was performed on the seven onEEGwaveLAD buffer configurations alone, excluding the five baselines, under both the channel-aggregated ($N = 30$, $k = 7$) and channel-specific ($N = 900$, $k = 7$) configurations. The channel-aggregated test yields $\chi^2(6) = 177.10$, $p = 1.40 \times 10^{-35}$,
-$\mathrm{CD} = 1.163$, and the channel-specific test yields $\chi^2(6) = 4621.85$,
-$p = 0.00 \times 10^{0}$, $\mathrm{CD} = 0.212$. Both configurations produce strictly monotonic mean ranks, with $B_s = 64$ ranked best ($3.10$), followed by $B_s = 32$ ($3.31$), $B_s = 16$ ($3.63$), $B_s = 8$ ($3.97$), $B_s = 4$ ($4.31$), $B_s = 2$ ($4.67$), and $B_s = 1$ ($5.00$). This monotonicity confirms that buffer size is a relevant hyperparameter whose effect is statistically significant and directionally consistent with the physical expectation that larger buffers supply richer context and yield better anomaly detection, validating the premise that motivated the grid search.
+\textbf{Directional significance: Seven-buffer Friedman test.} In addition to the twelve-method comparison, a separate Friedman test was performed on the seven onEEGwaveLAD buffer configurations alone, excluding the five baselines, under both the channel-aggregated ($N = 30$, $k = 7$) and channel-specific ($N = 900$, $k = 7$) configurations. The channel-aggregated test yields $\chi^2(6) = 177.10$, $p = 1.40 \times 10^{-35}$, $\mathrm{CD} = 1.163$, and the channel-specific test yields $\chi^2(6) = 4621.85$, $p = 0.00 \times 10^{0}$, $\mathrm{CD} = 0.212$. Both configurations produce strictly monotonic mean ranks, with $B_s = 64$ ranked best ($3.10$), followed by $B_s = 32$ ($3.31$), $B_s = 16$ ($3.63$), $B_s = 8$ ($3.97$), $B_s = 4$ ($4.31$), $B_s = 2$ ($4.67$), and $B_s = 1$ ($5.00$). This monotonicity confirms that buffer size is a relevant hyperparameter whose effect is statistically significant and directionally consistent with the physical expectation that larger buffers supply richer context and yield better anomaly detection, validating the premise that motivated the grid search.
 
 \begin{table}[!htb]
     \centering
@@ -1517,44 +1168,12 @@ $p = 0.00 \times 10^{0}$, $\mathrm{CD} = 0.212$. Both configurations produce str
     \subsection{Post-hoc Analysis: Wilcoxon--Holm and Nemenyi Critical Difference}
 \label{subsec:global_performance}
 
-The Friedman tests of Section~\ref{subsec:friedman_results} establish that the twelve methods do not
-perform equivalently, but they do not indicate which methods differ from which. The Nemenyi post-hoc
-procedure supplies that resolution by converting the mean ranks into pairwise statements of
-distinguishability, and it is on this basis that the practical standing of the convergence lower
-bound is assessed. The channel-aggregated configuration is treated as the primary analysis
-throughout, since its unit of replication is the subject and its sample size ($N = 30$) therefore
-matches the number of genuinely independent recordings in the study; the channel-specific
-configuration is reported afterwards as a secondary view whose narrower critical difference
-follows from pooling rather than from additional evidence.
+The Friedman tests of Section~\ref{subsec:friedman_results} establish that the twelve methods do not perform equivalently, but they do not indicate which methods differ from which. The Nemenyi post-hoc procedure supplies that resolution by converting the mean ranks into pairwise statements of distinguishability, and it is on this basis that the practical standing of the convergence lower bound is assessed. The channel-aggregated configuration is treated as the primary analysis throughout, since its unit of replication is the subject and its sample size ($N = 30$) therefore matches the number of genuinely independent recordings in the study; the channel-specific configuration is reported afterwards as a secondary view whose narrower critical difference follows from pooling rather than from additional evidence.
 
-Under the primary configuration, the twelve methods separate into an ordering in 
-which the four deepest buffers occupy the leading positions (Figure~\ref{fig:cd_baseline_aggregated}).
-onEEGwaveLAD attains its best mean rank at $B_s = 64$ ($5.11$), followed by $B_s = 32$ ($5.38$) and
-$B_s = 16$ ($5.77$); $B_s = 8$ ($6.15$) ranks immediately ahead of the strongest baseline,
-ASR\_offline\_20 ($6.25$), while $B_s = 4$ ($6.57$) falls behind it. The remaining baselines follow
-at ASR\_online\_20 ($6.78$) and ASR\_offline\_13 ($6.94$), interleaved with the shallowest buffers
-$B_s = 2$ ($7.01$) and $B_s = 1$ ($7.45$), with FASTER ($7.12$) and ASR\_online\_13 ($7.48$)
-completing the ordering. Two features of this arrangement address the central research question.
-Whereas the ordering reproduces the monotonic buffer effect established in
-Section~\ref{subsec:friedman_results}, it additionally locates the point at which the framework
-becomes competitive: $B_s = 8$ is the shallowest buffer whose mean rank surpasses that of every
-baseline method, and each buffer below it is outranked by at least one baseline.
+Under the primary configuration, the twelve methods separate into an ordering in which the four deepest buffers occupy the leading positions (Figure~\ref{fig:cd_baseline_aggregated}). onEEGwaveLAD attains its best mean rank at $B_s = 64$ ($5.11$), followed by $B_s = 32$ ($5.38$) and $B_s = 16$ ($5.77$); $B_s = 8$ ($6.15$) ranks immediately ahead of the strongest baseline, ASR\_offline\_20 ($6.25$), while $B_s = 4$ ($6.57$) falls behind it. The remaining baselines follow at ASR\_online\_20 ($6.78$) and ASR\_offline\_13 ($6.94$), interleaved with the shallowest buffers $B_s = 2$ ($7.01$) and $B_s = 1$ ($7.45$), with FASTER ($7.12$) and ASR\_online\_13 ($7.48$) completing the ordering. Two features of this arrangement address the central research question. Whereas the ordering reproduces the monotonic buffer effect established in Section~\ref{subsec:friedman_results}, it additionally locates the point at which the framework becomes competitive: $B_s = 8$ is the shallowest buffer whose mean rank surpasses that of every baseline method, and each buffer below it is outranked by at least one baseline.
 
-The magnitude of that advantage must be stated with precision, since the rank separation involved is
-small. The difference between $B_s = 8$ and ASR\_offline\_20 is $0.10$ rank units against a critical
-difference of $2.151$, so the two are statistically indistinguishable under the Nemenyi criterion;
-the defensible reading is that onEEGwaveLAD \emph{attains} the performance of the strongest baseline
-at $B_s = 8$, not that it surpasses it. The same threshold constrains the deeper buffers as well:
-although $B_s = 16$, $B_s = 32$ and $B_s = 64$ all outrank ASR\_offline\_20 by progressively larger
-margins ($0.48$, $0.87$ and $1.14$ respectively), none of these differences reaches $2.151$, and no
-buffer configuration is separated from the strongest baseline at the subject level. Within this
-configuration only two pairwise contrasts clear the critical difference at all, both involving the
-deepest buffer: $B_s = 64$ against ASR\_online\_13 ($2.37$) and $B_s = 64$ against $B_s = 1$
-($2.34$). Consequently the primary analysis supports a statement of parity with the established
-methods and a statement of significant internal improvement from the shallowest to the deepest
-buffer, but it does not support a claim that onEEGwaveLAD significantly outperforms the baseline
-family at any buffer size. Table~\ref{tab:pairwise_key} records the comparisons on which these
-statements rest.
+The magnitude of that advantage must be stated with precision, since the rank separation involved is small. The difference between $B_s = 8$ and ASR\_offline\_20 is $0.10$ rank units against a critical difference of $2.151$, so the two are statistically indistinguishable under the Nemenyi criterion; the defensible reading is that onEEGwaveLAD \emph{attains} the performance of the strongest baseline at $B_s = 8$, not that it surpasses it. The same threshold constrains the deeper buffers as well: although $B_s = 16$, $B_s = 32$ and $B_s = 64$ all outrank ASR\_offline\_20 by progressively larger margins ($0.48$, $0.87$ and $1.14$ respectively), none of these differences reaches $2.151$, and no buffer configuration is separated from the strongest baseline at the subject level. Within this configuration only two pairwise contrasts clear the critical difference at all, both involving the deepest buffer: $B_s = 64$ against ASR\_online\_13 ($2.37$) and $B_s = 64$ against $B_s = 1$ ($2.34$). Consequently the primary analysis supports a statement of parity with the established methods and a statement of significant internal improvement from the shallowest to the deepest buffer, but it does not support a claim that onEEGwaveLAD significantly outperforms the baseline
+family at any buffer size. Table~\ref{tab:pairwise_key} records the comparisons on which these statements rest.
 
 \begin{table}[!htb]
     \centering
@@ -1584,48 +1203,16 @@ statements rest.
     \label{tab:pairwise_key}
 \end{table}
 
-The channel-specific configuration yields identical mean ranks, for the reason given in
-Section~\ref{subsec:friedman_results}, but a critical difference of $0.393$
-(Figure~\ref{fig:cd_baseline_specific}). Under that threshold the contrasts involving the deeper
-buffers do separate: $B_s = 16$, $B_s = 32$ and $B_s = 64$ are each distinguished from
-ASR\_offline\_20 and from every weaker baseline, whereas $B_s = 8$ remains indistinguishable from
-ASR\_offline\_20 at a separation of $0.10$. This view is informative in one specific respect -- the
-rank advantage of the deeper buffers is systematic across channel--subject pairs rather than being
-confined to a subset of recordings -- but it does not license a stronger claim than the primary
-analysis. Because the nine hundred observations comprise thirty channels drawn from each of thirty
-subjects, they are not mutually independent, and the narrowing of the critical difference from
-$2.151$ to $0.393$ reflects the inflated nominal sample size rather than any accumulation of new
-evidence. The claim carried forward into the discussion is therefore the conservative one obtained
-at the subject level, with the channel-specific result cited only as an indication that the ordering
-is consistent within recordings as well as across them.
+The channel-specific configuration yields identical mean ranks, for the reason given in Section~\ref{subsec:friedman_results}, but a critical difference of $0.393$ (Figure~\ref{fig:cd_baseline_specific}). Under that threshold the contrasts involving the deeper buffers do separate: $B_s = 16$, $B_s = 32$ and $B_s = 64$ are each distinguished from ASR\_offline\_20 and from every weaker baseline, whereas $B_s = 8$ remains indistinguishable from ASR\_offline\_20 at a separation of $0.10$. This view is informative in one specific respect -- the rank advantage of the deeper buffers is systematic across channel--subject pairs rather than being confined to a subset of recordings -- but it does not license a stronger claim than the primary analysis. Because the nine hundred observations comprise thirty channels drawn from each of thirty subjects, they are not mutually independent, and the narrowing of the critical difference from $2.151$ to $0.393$ reflects the inflated nominal sample size rather than any accumulation of new evidence. The claim carried forward into the discussion is therefore the conservative one obtained at the subject level, with the channel-specific result cited only as an indication that the ordering is consistent within recordings as well as across them.
 
-The within-subject analysis provides a third perspective, assessing whether the pooled ordering is
-reproduced inside individual recordings rather than emerging only after averaging. Friedman tests
-conducted separately within each subject, treating the thirty channels as replicates, reject the
-null hypothesis in all thirty cases, and the accompanying Wilcoxon signed-rank tests with
-Holm correction quantify how consistently each pairwise relation recurs across the cohort
-(Figure~\ref{fig:cd_baseline_panels}). The contrasts between the deeper buffers and the shallowest
-ones are the most stable: $B_s = 64$ is significantly better than $B_s = 1$ in every subject, and
-the comparisons of $B_s = 64$, $B_s = 32$, $B_s = 16$ and $B_s = 8$ against $B_s = 2$ reach
-significance in at least twenty-nine of thirty subjects. Comparisons involving ASR\_offline\_20 are
-markedly less consistent, reaching significance against the four deepest buffers in between
-$63$ and $73$ per cent of subjects, which corroborates at the individual level the parity observed
-in the pooled ranks. The weakest and least consistent contrast in the matrix is FASTER against
-ASR\_online\_13 ($33$ per cent), reflecting the proximity of the two lowest-ranked baselines.
+The within-subject analysis provides a third perspective, assessing whether the pooled ordering is reproduced inside individual recordings rather than emerging only after averaging. Friedman tests conducted separately within each subject, treating the thirty channels as replicates, reject the null hypothesis in all thirty cases, and the accompanying Wilcoxon signed-rank tests with Holm correction quantify how consistently each pairwise relation recurs across the cohort (Figure~\ref{fig:cd_baseline_panels}). The contrasts between the deeper buffers and the shallowest ones are the most stable: $B_s = 64$ is significantly better than $B_s = 1$ in every subject, and the comparisons of $B_s = 64$, $B_s = 32$, $B_s = 16$ and $B_s = 8$ against $B_s = 2$ reach significance in at least twenty-nine of thirty subjects. Comparisons involving ASR\_offline\_20 are markedly less consistent, reaching significance against the four deepest buffers in between $63$ and $73$ per cent of subjects, which corroborates at the individual level the parity observed in the pooled ranks. The weakest and least consistent contrast in the matrix is FASTER against ASR\_online\_13 ($33$ per cent), reflecting the proximity of the two lowest-ranked baselines.
 
 \begin{figure}[!htb]
 \hrule\vspace{0.5em}
     \centering
     \includegraphics[width=0.95\textwidth]{Figures/CD_baseline_metric-aggregated_summary.pdf}
     \vspace{0.5em}\hrule
-    \caption{Within-subject analysis: (a) Per-subject mean ranks across the twelve methods, averaged
-    over thirty channels within each subject; (b) Win matrix showing how many times each method
-    ranks first within a subject; (c) Pairwise significance matrix from Wilcoxon signed-rank tests
-    with Holm correction, displaying the fraction of subjects (out of thirty) in which each pairwise
-    comparison reaches $\alpha = 0.05$ significance. Darker cells indicate more consistent pairwise
-    separations across the cohort. The deepest buffers separate from the shallowest in nearly all
-    subjects; comparisons involving the baselines are less consistent, with ASR\_offline\_20 reaching
-    significance against the four deepest buffers in $63$--$73\%$ of subjects.}
+    \caption{Within-subject analysis: (a) Per-subject mean ranks across the twelve methods, averaged over thirty channels within each subject; (b) Win matrix showing how many times each method ranks first within a subject; (c) Pairwise significance matrix from Wilcoxon signed-rank tests with Holm correction, displaying the fraction of subjects (out of thirty) in which each pairwise comparison reaches $\alpha = 0.05$ significance. Darker cells indicate more consistent pairwise separations across the cohort. The deepest buffers separate from the shallowest in nearly all subjects; comparisons involving the baselines are less consistent, with ASR\_offline\_20 reaching significance against the four deepest buffers in $63$--$73\%$ of subjects.}
     \label{fig:cd_baseline_panels}
     \vspace{0.5em}\hrule
 \end{figure}
@@ -1635,14 +1222,7 @@ ASR\_online\_13 ($33$ per cent), reflecting the proximity of the two lowest-rank
     \centering
     \includegraphics[width=0.9\textwidth]{Figures/CD_baseline_channel-aggregated.pdf}
     \vspace{0.5em}\hrule
-    \caption{Critical difference diagram for the joint comparison of seven onEEGwaveLAD buffer
-    configurations and five baseline methods under the channel-aggregated configuration
-    (Friedman $p = 3.65 \times 10^{-32}$, $N = 30$ subjects, $k = 12$ methods,
-    $\mathrm{CD} = 2.151$). Methods connected by a horizontal bar are statistically
-    indistinguishable at $\alpha = 0.05$. The mean rank of $B_s = 8$ ($6.15$) is the shallowest
-    buffer to exceed that of the strongest baseline, ASR\_offline\_20 ($6.25$), by a margin of
-    $0.10$ rank units, which lies far below the critical difference and therefore denotes parity
-    rather than superiority.}
+    \caption{Critical difference diagram for the joint comparison of seven onEEGwaveLAD buffer configurations and five baseline methods under the channel-aggregated configuration (Friedman $p = 3.65 \times 10^{-32}$, $N = 30$ subjects, $k = 12$ methods, $\mathrm{CD} = 2.151$). Methods connected by a horizontal bar are statistically indistinguishable at $\alpha = 0.05$. The mean rank of $B_s = 8$ ($6.15$) is the shallowest buffer to exceed that of the strongest baseline, ASR\_offline\_20 ($6.25$), by a margin of $0.10$ rank units, which lies far below the critical difference and therefore denotes parity rather than superiority.}
     \label{fig:cd_baseline_aggregated}
     \vspace{0.5em}\hrule
 \end{figure}
@@ -1666,146 +1246,39 @@ ASR\_online\_13 ($33$ per cent), reflecting the proximity of the two lowest-rank
 \section{Interpretation of Findings}
 \label{sec:interpretation_findings}
 
-The monotonic relation between buffer depth and aggregate denoising quality admits a
-straightforward mechanistic reading in terms of how the Extended Isolation Forest acquires its
-notion of normality. The detector partitions a population of Instantaneous Spectral Profiles and
-assigns anomaly scores according to how readily a profile is isolated from the rest; its capacity
-to distinguish a transient artefact from an unusual but legitimate fluctuation therefore depends on
-the volume and representativeness of the profiles held in the buffer~\parencite{hariri2019extended}.
-When the buffer retains only one or two profiles, the reference population is too sparse to encode
-the variability of nominal cortical activity, and ordinary fluctuations are isolated as readily as
-genuine contamination, which produces indiscriminate attenuation. As the buffer deepens, the
-population increasingly spans the range of states the subject occupies, the isolation boundary
-stabilises, and mitigation becomes selective. The diminishing returns observed beyond
-$B_s = 8$ follow from the same account: once the buffer holds enough profiles to characterise the
-subject's baseline, further history adds redundant rather than novel information, and the isolation
-boundary ceases to move materially.
+The monotonic relation between buffer depth and aggregate denoising quality admits a straightforward mechanistic reading in terms of how the Extended Isolation Forest acquires its notion of normality. The detector partitions a population of Instantaneous Spectral Profiles and assigns anomaly scores according to how readily a profile is isolated from the rest; its capacity to distinguish a transient artefact from an unusual but legitimate fluctuation therefore depends on the volume and representativeness of the profiles held in the buffer~\parencite{hariri2019extended}. When the buffer retains only one or two profiles, the reference population is too sparse to encode the variability of nominal cortical activity, and ordinary fluctuations are isolated as readily as genuine contamination, which produces indiscriminate attenuation. As the buffer deepens, the population increasingly spans the range of states the subject occupies, the isolation boundary stabilises, and mitigation becomes selective. The diminishing returns observed beyond $B_s = 8$ follow from the same account: once the buffer holds enough profiles to characterise the subject's baseline, further history adds redundant rather than novel information, and the isolation boundary ceases to move materially.
 
 The divergence between the two metric categories documented in
-Section~\ref{subsec:impact_bs} is a direct consequence of this mechanism rather than an
-inconsistency in the evaluation. The similarity-oriented metrics reward the retention of the
-recorded waveform, so they improve as mitigation becomes more selective and the denoised signal
-departs less from its input. Conversely, the five artefact-removal metrics reward the enhancement of
-the event-locked response relative to the pre-stimulus baseline, and are consequently served by the
-indiscriminate attenuation that a sparse buffer produces; a detector that trims aggressively removes
-more contaminating energy, and is credited for doing so even where it also removes cortical signal.
-The two categories thus encode a genuine trade-off between preservation and suppression, and the
-non-monotonic trajectory of the five-metric artefact-removal category at large $B_s$ records the conservative end of
-that trade-off rather than any deterioration of the framework. The rebound visible when all fifteen
-metrics are averaged is the arithmetic consequence of combining these opposing directions, and is
-not interpreted as a unified physical effect.
+Section~\ref{subsec:impact_bs} is a direct consequence of this mechanism rather than an inconsistency in the evaluation. The similarity-oriented metrics reward the retention of the recorded waveform, so they improve as mitigation becomes more selective and the denoised signal departs less from its input. Conversely, the five artefact-removal metrics reward the enhancement of the event-locked response relative to the pre-stimulus baseline, and are consequently served by the indiscriminate attenuation that a sparse buffer produces; a detector that trims aggressively removes more contaminating energy, and is credited for doing so even where it also removes cortical signal. The two categories thus encode a genuine trade-off between preservation and suppression, and the non-monotonic trajectory of the five-metric artefact-removal category at large $B_s$ records the conservative end of that trade-off rather than any deterioration of the framework. The rebound visible when all fifteen metrics are averaged is the arithmetic consequence of combining these opposing directions, and is not interpreted as a unified physical effect.
 
-The catastrophic negative values in $\mathrm{SNR}_{\mathrm{diff}}$ reinforce the same reading from
-its extreme tail. These values arise almost exclusively at $B_s \in \{1, 2\}$ and in individual
-channels, which is the regime in which the mechanism above predicts over-trimming: where attenuation
-collapses the stimulus-locked response, the ratio on which the metric rests degrades sharply, and
-values below $-10$~dB result in roughly $0.70$ per cent of observations. Their origin lies in the denoising behaviour itself and not in the numerical guard 
-applied during computation. The $\pm 100$~dB cap is approached in only $0.59$ per 
-cent of observations and reached in none, so the tail cannot be attributed to 
-saturation of that limit. Its practical implication is confined to aggregation: a mean computed over a 
-distribution with a tail of this length is unstable, so the median is reported 
-alongside it and the two metric categories are examined separately.
+The catastrophic negative values in $\mathrm{SNR}_{\mathrm{diff}}$ reinforce the same reading from its extreme tail. These values arise almost exclusively at $B_s \in \{1, 2\}$ and in individual channels, which is the regime in which the mechanism above predicts over-trimming: where attenuation collapses the stimulus-locked response, the ratio on which the metric rests degrades sharply, and values below $-10$~dB result in roughly $0.70$ per cent of observations. Their origin lies in the denoising behaviour itself and not in the numerical guard applied during computation. The $\pm 100$~dB cap is approached in only $0.59$ per cent of observations and reached in none, so the tail cannot be attributed to saturation of that limit. Its practical implication is confined to aggregation: a mean computed over a distribution with a tail of this length is unstable, so the median is reported alongside it and the two metric categories are examined separately.
 
-The empirical picture obtained here is consistent with the physical expectation set out in the
-literature review, namely that a detector operating on a sliding history improves as that history
-lengthens and subsequently converges, and it does not reproduce the symmetric degradation that a
-concept-drift account would predict at the upper end of the
-range~\parencite{gama2014survey, longo2025oneegwavelad}. Across the grid examined, aggregate
-performance improves monotonically as far as $B_s = 64$; no buffer depth within
-$[1, 64]$ exhibits the deterioration that would follow from a buffer saturated with outdated states.
-This does not establish that such a regime cannot exist, since a buffer sufficiently long to span
-substantial changes in cognitive state was not tested here, and the range examined is bounded by the
-grid rather than by a physical argument. The conclusion supported by the data is narrower and directional: within the 
-practical range relevant to online deployment, the operative constraint is 
-insufficient history rather than excessive history, so the quantity of interest 
-is a lower bound.
+The empirical picture obtained here is consistent with the physical expectation set out in the literature review, namely that a detector operating on a sliding history improves as that history lengthens and subsequently converges, and it does not reproduce the symmetric degradation that a concept-drift account would predict at the upper end of the range~\parencite{gama2014survey, longo2025oneegwavelad}. Across the grid examined, aggregate performance improves monotonically as far as $B_s = 64$; no buffer depth within $[1, 64]$ exhibits the deterioration that would follow from a buffer saturated with outdated states. This does not establish that such a regime cannot exist, since a buffer sufficiently long to span substantial changes in cognitive state was not tested here, and the range examined is bounded by the grid rather than by a physical argument. The conclusion supported by the data is narrower and directional: within the practical range relevant to online deployment, the operative constraint is insufficient history rather than excessive history, so the quantity of interest is a lower bound.
 
-Two aspects of the analysis require explicit methodological comment, since both affect how the
-reported threshold should be read. The elbow located by the Kneedle procedure moved from
-$B_s = 4$ in the coarse stage to $B_s = 8$ in the refined stage, and this shift is attributable in
-part to the denser sampling of the interval and in part to the change of horizontal scale from
-logarithmic to linear, to which curvature-based elbow detection is
-sensitive~\parencite{satopaa2011finding}. Neither stage is discarded. The refined stage is preferred because it samples the 
-region of interest more densely and preserves the absolute spacing of the buffer 
-values, and the coarse stage is retained as the analysis that identified where to 
-refine. Furthermore, the parity between $B_s = 8$ and the strongest baseline is established at
-the subject level, where the critical difference is wide; the deeper buffers rank ahead of every
-baseline without reaching that threshold. The framework is therefore best characterised as matching
-established automated methods once the buffer is sufficiently deep, rather than as displacing them.
+Two aspects of the analysis require explicit methodological comment, since both affect how the reported threshold should be read. The elbow located by the Kneedle procedure moved from $B_s = 4$ in the coarse stage to $B_s = 8$ in the refined stage, and this shift is attributable in part to the denser sampling of the interval and in part to the change of horizontal scale from logarithmic to linear, to which curvature-based elbow detection is sensitive~\parencite{satopaa2011finding}. Neither stage is discarded. The refined stage is preferred because it samples the region of interest more densely and preserves the absolute spacing of the buffer values, and the coarse stage is retained as the analysis that identified where to refine. Furthermore, the parity between $B_s = 8$ and the strongest baseline is established at the subject level, where the critical difference is wide; the deeper buffers rank ahead of every baseline without reaching that threshold. The framework is therefore best characterised as matching established automated methods once the buffer is sufficiently deep, rather than as displacing them.
 
 \section{Effectiveness and Shortcomings of Findings}
 \label{sec:effectiveness_shortcomings}
 
-The findings documented in the preceding sections establish a convergence lower 
-bound and situate it relative to baseline methods, but their practical utility 
-depends on how robustly they generalise across subjects and analytical choices, 
-and on how honestly their limitations are acknowledged. This section first assesses the stability of the threshold across the thirty-subject cohort and the three statistical configurations, then documents the unresolved methodological gaps that delimit the scope of the conclusions and remain the principal open questions for future work.
+The findings documented in the preceding sections establish a convergence lower bound and situate it relative to baseline methods, but their practical utility depends on how robustly they generalise across subjects and analytical choices, and on how honestly their limitations are acknowledged. This section first assesses the stability of the threshold across the thirty-subject cohort and the three statistical configurations, then documents the unresolved methodological gaps that delimit the scope of the conclusions and remain the principal open questions for future work.
 
     \subsection{Generalisability and Robustness Across Subjects}
     \label{subsec:generalisability}
 
-The threshold reported in Section~\ref{subsec:identification_threshold} rests on the full
-thirty-subject N170 cohort evaluated across thirty channels, so that the behaviour described reflects
-inter-subject variability rather than a single favourable recording. Its stability was examined along
-three axes. Across analytical configurations, the monotonic ordering of buffer sizes is reproduced
-under channel-aggregated, channel-specific and within-subject analyses, which differ in their unit
-of replication and consequently in their critical differences but not in their point estimates or in
-the direction of the effect. Across the two grid stages, the coarse and refined searches locate the
-onset of diminishing returns in the same region, and the median-aggregated trajectories of both
-stages converge on $B_s \approx 8$. Across individual recordings, the within-subject Friedman tests
-reject the null hypothesis in all thirty subjects, and the contrasts between the deeper and the
-shallowest buffers recur in at least twenty-nine of thirty. The convergence behaviour on which the
-lower bound rests is therefore not an artefact of pooling.
+The threshold reported in Section~\ref{subsec:identification_threshold} rests on the full thirty-subject N170 cohort evaluated across thirty channels, so that the behaviour described reflects inter-subject variability rather than a single favourable recording. Its stability was examined along three axes. Across analytical configurations, the monotonic ordering of buffer sizes is reproduced under channel-aggregated, channel-specific and within-subject analyses, which differ in their unit of replication and consequently in their critical differences but not in their point estimates or in the direction of the effect. Across the two grid stages, the coarse and refined searches locate the onset of diminishing returns in the same region, and the median-aggregated trajectories of both stages converge on $B_s \approx 8$. Across individual recordings, the within-subject Friedman tests reject the null hypothesis in all thirty subjects, and the contrasts between the deeper and the shallowest buffers recur in at least twenty-nine of thirty. The convergence behaviour on which the lower bound rests is therefore not an artefact of pooling.
 
-Two qualifications bound this generalisability. The consistency established above concerns the
-\emph{ordering} of buffer sizes and the \emph{location} of the convergence region; it does not
-extend to the parity claim against the baselines, which is supported at the subject level by a rank
-difference of $0.10$ and is reproduced at the individual level in only $63$ to $73$ per cent of
-subjects. Moreover, the entire analysis is conducted within a single paradigm and cohort, on
-stimulus-locked recordings from a thirty-channel laboratory montage, and the recommended lower bound
-should be read as specific to that setting rather than as a device-independent constant. 
+Two qualifications bound this generalisability. The consistency established above concerns the \emph{ordering} of buffer sizes and the \emph{location} of the convergence region; it does not extend to the parity claim against the baselines, which is supported at the subject level by a rank difference of $0.10$ and is reproduced at the individual level in only $63$ to $73$ per cent of subjects. Moreover, the entire analysis is conducted within a single paradigm and cohort, on stimulus-locked recordings from a thirty-channel laboratory montage, and the recommended lower bound should be read as specific to that setting rather than as a device-independent constant. 
 
     \subsection{Unresolved Knowledge Gaps for Future Extensions}
     \label{subsec:unresolved_gaps}
 
-Several limitations delimit the scope of the conclusions and indicate where further work is
-required. The wavelet decomposition passes the terminal approximation coefficients through 
-unmodified, so spectral content below approximately $2$~Hz is not subject to 
-mitigation; the detail band covering roughly $2$ to $4$~Hz, which carries the 
-greater part of blink energy, is processed, and the residual gap is therefore 
-confined to the $[0, 2]$~Hz range rather than encompassing the whole of the delta 
-band. Consequently, very slow drift is attenuated only by the
-$1$~Hz high-pass applied during preprocessing and not by the framework itself. The expansion step
-was held at $E_s = 35$ throughout, so no interaction between the mitigation footprint and the buffer
-depth was examined, and the reported bound is conditional on that setting. A grid over $E_s$
-jointly with $B_s$ remains open as future work.
+Several limitations delimit the scope of the conclusions and indicate where further work is required. The wavelet decomposition passes the terminal approximation coefficients through unmodified, so spectral content below approximately $2$~Hz is not subject to mitigation; the detail band covering roughly $2$ to $4$~Hz, which carries the greater part of blink energy, is processed, and the residual gap is therefore confined to the $[0, 2]$~Hz range rather than encompassing the whole of the delta band. Consequently, very slow drift is attenuated only by the $1$~Hz high-pass applied during preprocessing and not by the framework itself. The expansion step was held at $E_s = 35$ throughout, so no interaction between the mitigation footprint and the buffer depth was examined, and the reported bound is conditional on that setting. A grid over $E_s$ jointly with $B_s$ remains open as future work.
 
 
-The evaluation protocol imposes a further constraint that shapes how the metric trajectories should
-be understood. Real recordings supply no artefact-free reference, so the similarity-oriented metrics
-are computed against the contaminated input and in effect quantify how much the signal was altered;
-they consequently favour conservative mitigation on structural grounds, independently of whether the
-material removed was cortical or artefactual. Ranking across a heterogeneous suite and benchmarking
-against independent baselines mitigate but do not eliminate this bias, and a validation on data with
-a known clean reference -- obtained by means other than injecting synthetic artefacts into already
-contaminated recordings, which was judged indefensible for this dataset -- would be required to
-resolve it. Per-window processing time was not recorded during the batch evaluation, so the
-real-time viability of the identified lower bound cannot be verified from these experiments; online
-deployment testing with latency profiling remains necessary to confirm that $B_s = 8$ sustains
+The evaluation protocol imposes a further constraint that shapes how the metric trajectories should be understood. Real recordings supply no artefact-free reference, so the similarity-oriented metrics are computed against the contaminated input and in effect quantify how much the signal was altered; they consequently favour conservative mitigation on structural grounds, independently of whether the material removed was cortical or artefactual. Ranking across a heterogeneous suite and benchmarking against independent baselines mitigate but do not eliminate this bias, and a validation on data with a known clean reference -- obtained by means other than injecting synthetic artefacts into already contaminated recordings, which was judged indefensible for this dataset -- would be required to resolve it. Per-window processing time was not recorded during the batch evaluation, so the real-time viability of the identified lower bound cannot be verified from these experiments; online deployment testing with latency profiling remains necessary to confirm that $B_s = 8$ sustains
 throughput without accumulating delay.
 
-Two further qualifications concern the strength of the central claims. The parity between
-$B_s = 8$ and ASR\_offline\_20 rests on a rank separation of $0.10$ against a critical difference of
-$2.151$; the deeper buffers rank ahead of all baselines but likewise without reaching that
-threshold, so no buffer configuration is established as significantly superior to the baseline
-family at the subject level, and the separation observed under the pooled channel-specific analysis
-should not be read as strengthening that claim. The median aggregation, finally, is a robustness
-check rather than an independent third confirmation: because ten of the fifteen metrics belong
-to the similarity-oriented category, the median tracks that majority and suppresses the five
-artefact-removal metrics by construction, so it re-expresses the convergence of the similarity
-family under a robust aggregator instead of synthesising all fifteen on equal terms. Establishing an adaptive threshold in place of the fixed $T_a = 0.55$, and characterising 
-whether a sufficiently long buffer eventually induces the drift regime that the present range 
-does not exhibit, remain the principal open questions for future work.
+Two further qualifications concern the strength of the central claims. The parity between $B_s = 8$ and ASR\_offline\_20 rests on a rank separation of $0.10$ against a critical difference of $2.151$; the deeper buffers rank ahead of all baselines but likewise without reaching that threshold, so no buffer configuration is established as significantly superior to the baseline family at the subject level, and the separation observed under the pooled channel-specific analysis should not be read as strengthening that claim. The median aggregation, finally, is a robustness check rather than an independent third confirmation: because ten of the fifteen metrics belong to the similarity-oriented category, the median tracks that majority and suppresses the five artefact-removal metrics by construction, so it re-expresses the convergence of the similarity family under a robust aggregator instead of synthesising all fifteen on equal terms. Establishing an adaptive threshold in place of the fixed $T_a = 0.55$, and characterising whether a sufficiently long buffer eventually induces the drift regime that the present range does not exhibit, remain the principal open questions for future work.
 \chapter{Conclusion}
 \label{chap:conclusion}
 
@@ -1837,17 +1310,9 @@ For practitioners deploying the onEEGwaveLAD framework under conditions similar 
 
 Several extensions would strengthen the empirical foundation. Joint optimisation of buffer size ($B_s$) and expansion step ($E_s$) would show how the mitigation footprint interacts with buffer depth. Testing on other paradigms (resting-state, motor-imagery BCI, vigilance monitoring) would show whether $B_s \approx 8$ generalises beyond stimulus-locked protocols~\parencite{kappenman2021erp}. Testing buffers larger than sixty-four on long recordings would show whether performance eventually declines when the buffer spans substantial changes in cognitive state~\parencite{gama2014survey}. Implementing an adaptive anomaly threshold $T_a$ that adjusts per subject or per channel, rather than the global constant $0.55$ used here, could improve sensitivity. Deployment profiling on representative edge hardware would verify that $B_s = 8$ sustains real-time throughput without accumulating latency. Extending anomaly detection to the approximation coefficients would address contamination below 2 Hz, though the bulk of ocular artefact energy resides in the processed 2-4 Hz detail band~\parencite{longo2025oneegwavelad}. These extensions would test the generalisability of the convergence lower bound and identify boundary conditions under which the framework's behaviour changes. The methodological framework developed here provides a template for such investigations.
 
-
-% ==========================================
-% Back Matter (后置部分：参考文献)
-% ==========================================
 \backmatter
 
 \printbibliography
-
-% ==========================================
-% Appendices (附录)
-% ==========================================
 
 \appendix
 
@@ -1863,7 +1328,7 @@ The temporal evolution of the sliding buffer mechanism, introduced in Section~\r
 
 The animated sequence is available at the following permanent repository:
 
-\href{https://github.com/Areca293/Evaluating-the-Isolation-Forest-unsupervised-anomaly-detector-of-onEEGWaveLAD/blob/main/vis2\_buffer\_evolution.gif}{GitHub: Areca293/onEEGWaveLAD (vis2\_buffer\_evolution.gif)}
+\href{https://github.com/Areca293/Evaluating-the-Isolation-Forest-unsupervised-anomaly-detector-of-onEEGWaveLAD/blob/main/vis2\_buffer\_evolution.gif}{GitHub: Areca293/onEEGwaveLAD (vis2\_buffer\_evolution.gif)}
 
 Each frame corresponds to one window in the continuous recording. The vertical axis displays the $B_s$ most recent ISPs retained in the buffer (rows represent historical samples, with the current window at the top and older profiles below), and the horizontal axis spans the scaleogram feature dimensions. Heatmap intensity encodes normalised feature amplitude (magma colourmap: dark = low, bright = high). Clean epochs yield relatively uniform low-intensity patterns, while contaminated epochs introduce bright high-amplitude bands. This temporal visualisation demonstrates how a sufficiently deep buffer ($B_s \geq 8$) retains enough history to distinguish transient artefacts from legitimate neural variability.
 
